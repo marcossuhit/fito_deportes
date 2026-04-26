@@ -1,0 +1,1967 @@
+import { useEffect, useMemo, useState } from "react";
+import { api } from "./api";
+
+const emptyForm = {
+  barcode: "",
+  name: "",
+  price: "",
+  stock: "",
+  low_stock_threshold: "2"
+};
+
+function money(value) {
+  return `$${Number(value || 0).toFixed(2)}`;
+}
+
+function paymentMethodLabel(value) {
+  const key = String(value || "").toLowerCase();
+  if (key === "cash") return "Efectivo";
+  if (key === "card") return "Tarjeta";
+  if (key === "transfer") return "Transferencia";
+  if (key === "other") return "Otro";
+  return value || "-";
+}
+
+function paymentMethodTone(value) {
+  const key = String(value || "").toLowerCase();
+  if (key === "cash") return "bg-emerald-100 text-emerald-800";
+  if (key === "card") return "bg-blue-100 text-blue-800";
+  if (key === "transfer") return "bg-indigo-100 text-indigo-800";
+  return "bg-slate-200 text-slate-800";
+}
+
+function arcaStatusLabel(value) {
+  const key = String(value || "not_generated").toLowerCase();
+  if (key === "issued") return "Emitido";
+  if (key === "pending") return "Pendiente";
+  if (key === "error") return "Con error";
+  return "Sin generar";
+}
+
+function arcaStatusTone(value) {
+  const key = String(value || "not_generated").toLowerCase();
+  if (key === "issued") return "bg-emerald-100 text-emerald-800";
+  if (key === "pending") return "bg-amber-100 text-amber-800";
+  if (key === "error") return "bg-red-100 text-red-800";
+  return "bg-slate-200 text-slate-800";
+}
+
+function SectionHero({ title, description }) {
+  return (
+    <section className="rounded-2xl bg-gradient-to-r from-[#111827] via-[#1e293b] to-[#0f766e] p-5 text-white shadow-sm">
+      <h2 className="text-2xl font-bold">{title}</h2>
+      <p className="mt-1 text-slate-200">{description}</p>
+    </section>
+  );
+}
+
+function App() {
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(null);
+  const [loginForm, setLoginForm] = useState({ username: "Fito", password: "" });
+  const [loginError, setLoginError] = useState("");
+  const isAdminLogin = loginForm.username === "FitoAdmin";
+
+  const [products, setProducts] = useState([]);
+  const [sales, setSales] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [cash, setCash] = useState({ openSession: null, metrics: null });
+  const [cashHistory, setCashHistory] = useState([]);
+
+  const [error, setError] = useState("");
+
+  const [activeView, setActiveView] = useState("inicio");
+
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState(emptyForm);
+
+  const [stockSearch, setStockSearch] = useState("");
+  const [stockAdjustMessage, setStockAdjustMessage] = useState("");
+  const [stockAdjustError, setStockAdjustError] = useState("");
+
+  const [saleBarcode, setSaleBarcode] = useState("");
+  const [cart, setCart] = useState([]);
+  const [paymentMethod, setPaymentMethod] = useState("cash");
+  const [saleMessage, setSaleMessage] = useState("");
+  const [saleError, setSaleError] = useState("");
+
+  const [openingAmount, setOpeningAmount] = useState("0");
+  const [closingAmount, setClosingAmount] = useState("0");
+  const [cashMessage, setCashMessage] = useState("");
+  const [invoiceFilters, setInvoiceFilters] = useState({
+    invoiceQuery: "",
+    paymentMethod: "",
+    seller: "",
+    dateFrom: "",
+    dateTo: ""
+  });
+  const [selectedSaleId, setSelectedSaleId] = useState(null);
+  const [selectedSaleDetail, setSelectedSaleDetail] = useState(null);
+  const [selectedSaleLoading, setSelectedSaleLoading] = useState(false);
+  const [selectedSaleError, setSelectedSaleError] = useState("");
+
+  const [priceMode, setPriceMode] = useState("percentage");
+  const [priceValue, setPriceValue] = useState("");
+  const [priceMessage, setPriceMessage] = useState("");
+  const [arcaMessage, setArcaMessage] = useState("");
+  const [arcaError, setArcaError] = useState("");
+  const [arcaLoadingSaleId, setArcaLoadingSaleId] = useState(null);
+  const [usdQuote, setUsdQuote] = useState({
+    sell: null,
+    buy: null,
+    source: "",
+    updatedAt: null
+  });
+
+  const cartTotal = useMemo(
+    () => cart.reduce((sum, item) => sum + Number(item.price) * item.quantity, 0),
+    [cart]
+  );
+
+  const lowStockProducts = stats?.lowStockProducts || [];
+  const paymentBreakdown = stats?.paymentBreakdown || [];
+  const filteredStockProducts = useMemo(() => {
+    const query = stockSearch.trim().toLowerCase();
+    if (!query) {
+      return products;
+    }
+
+    return products.filter((product) => {
+      const barcode = String(product.barcode || "").toLowerCase();
+      const name = String(product.name || "").toLowerCase();
+      return barcode.includes(query) || name.includes(query);
+    });
+  }, [products, stockSearch]);
+  const saleSuggestions = useMemo(() => {
+    const query = saleBarcode.trim().toLowerCase();
+    if (!query) {
+      return [];
+    }
+
+    return products
+      .filter((product) => {
+        const barcode = String(product.barcode || "").toLowerCase();
+        const name = String(product.name || "").toLowerCase();
+        return barcode.includes(query) || name.includes(query);
+      })
+      .slice(0, 8);
+  }, [products, saleBarcode]);
+
+  const navItems = [
+    { id: "inicio", label: "Inicio" },
+    { id: "ventas", label: "Ventas" },
+    { id: "stock", label: "Stock" },
+    { id: "ajuste_stock", label: "Ajuste Stock" },
+    { id: "caja", label: "Caja" },
+    { id: "facturas", label: "Facturas" },
+    { id: "precios", label: "Precios" },
+    { id: "estadisticas", label: "Estadísticas" }
+  ];
+
+  const invoiceSellers = useMemo(() => {
+    return [...new Set(sales.map((sale) => sale.seller).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  }, [sales]);
+
+  const filteredInvoices = useMemo(() => {
+    const query = invoiceFilters.invoiceQuery.trim().toLowerCase();
+
+    return sales.filter((sale) => {
+      const invoiceNumber = String(sale.invoice_number || "").toLowerCase();
+      const seller = String(sale.seller || "").toLowerCase();
+      const paymentMethodValue = String(sale.payment_method || "").toLowerCase();
+      const createdDate = new Date(sale.created_at);
+
+      if (query && !invoiceNumber.includes(query) && !seller.includes(query)) {
+        return false;
+      }
+
+      if (invoiceFilters.paymentMethod && paymentMethodValue !== invoiceFilters.paymentMethod) {
+        return false;
+      }
+
+      if (invoiceFilters.seller && sale.seller !== invoiceFilters.seller) {
+        return false;
+      }
+
+      if (invoiceFilters.dateFrom) {
+        const fromDate = new Date(`${invoiceFilters.dateFrom}T00:00:00`);
+        if (createdDate < fromDate) {
+          return false;
+        }
+      }
+
+      if (invoiceFilters.dateTo) {
+        const toDate = new Date(`${invoiceFilters.dateTo}T23:59:59.999`);
+        if (createdDate > toDate) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [invoiceFilters, sales]);
+
+  useEffect(() => {
+    bootstrap();
+  }, []);
+
+  useEffect(() => {
+    fetchUsdQuote();
+    const timer = setInterval(fetchUsdQuote, 1000 * 60 * 10);
+    return () => clearInterval(timer);
+  }, []);
+
+  async function fetchUsdQuote() {
+    try {
+      const response = await fetch("https://dolarapi.com/v1/dolares/oficial");
+      if (!response.ok) {
+        throw new Error("No disponible");
+      }
+      const data = await response.json();
+      const sell = Number(data?.venta);
+      const buy = Number(data?.compra);
+
+      if (!Number.isFinite(sell) || !Number.isFinite(buy)) {
+        throw new Error("No disponible");
+      }
+
+      setUsdQuote({
+        sell,
+        buy,
+        source: "DolarAPI",
+        updatedAt: new Date().toISOString()
+      });
+    } catch {
+      setUsdQuote((prev) => ({
+        ...prev,
+        updatedAt: new Date().toISOString()
+      }));
+    }
+  }
+
+  async function bootstrap() {
+    try {
+      const data = await api.me();
+      setUser(data.user);
+      await loadDashboard();
+    } catch {
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadDashboard() {
+    try {
+      const [productsData, salesData, statsData, cashData, cashHistoryData] = await Promise.all([
+        api.listProducts(),
+        api.listSales(),
+        api.statsOverview(),
+        api.cashStatus(),
+        api.cashHistory()
+      ]);
+
+      setProducts(productsData.products || []);
+      setSales(salesData.sales || []);
+      setStats(statsData.stats || null);
+      setCash({
+        openSession: cashData.openSession || null,
+        metrics: cashData.metrics || null
+      });
+      setCashHistory(cashHistoryData.sessions || []);
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function reloadProductsAndStats() {
+    try {
+      const [productsData, statsData, cashData, salesData] = await Promise.all([
+        api.listProducts(),
+        api.statsOverview(),
+        api.cashStatus(),
+        api.listSales()
+      ]);
+      setProducts(productsData.products || []);
+      setStats(statsData.stats || null);
+      setCash({
+        openSession: cashData.openSession || null,
+        metrics: cashData.metrics || null
+      });
+      setSales(salesData.sales || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleLogin(e) {
+    e.preventDefault();
+    setLoginError("");
+
+    try {
+      const data = await api.login(loginForm.username, loginForm.password);
+      setUser(data.user);
+      await loadDashboard();
+    } catch (err) {
+      setLoginError(err.message);
+    }
+  }
+
+  async function handleLogout() {
+    await api.logout();
+    setUser(null);
+    setProducts([]);
+    setSales([]);
+    setStats(null);
+    setCash({ openSession: null, metrics: null });
+    setCashHistory([]);
+    setActiveView("inicio");
+  }
+
+  function openCreateForm() {
+    setEditingId(null);
+    setForm(emptyForm);
+    setIsFormOpen(true);
+    setError("");
+  }
+
+  function openEditForm(product) {
+    setEditingId(product.id);
+    setForm({
+      barcode: product.barcode,
+      name: product.name,
+      price: String(product.price),
+      stock: String(product.stock),
+      low_stock_threshold: String(product.low_stock_threshold ?? 2)
+    });
+    setIsFormOpen(true);
+    setError("");
+  }
+
+  async function saveProduct(e) {
+    e.preventDefault();
+    setError("");
+
+    const payload = {
+      barcode: form.barcode.trim(),
+      name: form.name.trim(),
+      price: Number(form.price),
+      stock: Number(form.stock),
+      low_stock_threshold: Number(form.low_stock_threshold)
+    };
+
+    try {
+      if (editingId) {
+        await api.updateProduct(editingId, payload);
+      } else {
+        await api.createProduct(payload);
+      }
+
+      setIsFormOpen(false);
+      setForm(emptyForm);
+      setEditingId(null);
+      await reloadProductsAndStats();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function removeProduct(id) {
+    const confirmed = window.confirm("¿Seguro que querés eliminar este producto?");
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await api.deleteProduct(id);
+      await reloadProductsAndStats();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function adjustProductStock(product, delta) {
+    setStockAdjustMessage("");
+    setStockAdjustError("");
+
+    try {
+      const data = await api.scanBarcode(product.barcode, delta);
+      const action = delta > 0 ? "+1" : "-1";
+      setStockAdjustMessage(`Stock actualizado: ${data.product.name} (${action})`);
+      await reloadProductsAndStats();
+    } catch (err) {
+      setStockAdjustError(err.message);
+    }
+  }
+
+  function addToCart() {
+    setSaleError("");
+    setSaleMessage("");
+
+    const searchText = saleBarcode.trim();
+
+    if (!searchText) {
+      setSaleError("Ingresá código o nombre de producto para vender.");
+      return;
+    }
+
+    let product = products.find((item) => item.barcode === searchText);
+
+    if (!product) {
+      const normalizedQuery = searchText.toLowerCase();
+      const matches = products.filter((item) => {
+        const barcode = String(item.barcode || "").toLowerCase();
+        const name = String(item.name || "").toLowerCase();
+        return barcode.includes(normalizedQuery) || name.includes(normalizedQuery);
+      });
+
+      if (matches.length === 1) {
+        product = matches[0];
+      } else if (matches.length > 1) {
+        setSaleError("Hay varias coincidencias. Elegí un producto de la lista.");
+        return;
+      }
+    }
+
+    if (!product) {
+      setSaleError("No existe producto con ese código o nombre.");
+      return;
+    }
+
+    addProductToCart(product);
+  }
+
+  function addProductToCart(product, quantity = 1) {
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      setSaleError("Cantidad inválida.");
+      return;
+    }
+
+    if (product.stock <= 0) {
+      setSaleError("Ese producto no tiene stock disponible.");
+      return;
+    }
+
+    setCart((prev) => {
+      const existing = prev.find((item) => item.productId === product.id);
+      if (!existing) {
+        return [
+          ...prev,
+          {
+            productId: product.id,
+            barcode: product.barcode,
+            name: product.name,
+            price: Number(product.price),
+            quantity,
+            maxStock: product.stock
+          }
+        ];
+      }
+
+      const nextQty = existing.quantity + quantity;
+      if (nextQty > product.stock) {
+        setSaleError(`Stock insuficiente para ${product.name}.`);
+        return prev;
+      }
+
+      return prev.map((item) =>
+        item.productId === product.id ? { ...item, quantity: nextQty, maxStock: product.stock } : item
+      );
+    });
+
+    setSaleBarcode("");
+    setSaleError("");
+  }
+
+  function changeCartQuantity(productId, value) {
+    const nextQty = Number(value);
+
+    if (!Number.isInteger(nextQty) || nextQty <= 0) {
+      return;
+    }
+
+    setCart((prev) =>
+      prev.map((item) => {
+        if (item.productId !== productId) {
+          return item;
+        }
+
+        return {
+          ...item,
+          quantity: Math.min(nextQty, item.maxStock)
+        };
+      })
+    );
+  }
+
+  function removeCartItem(productId) {
+    setCart((prev) => prev.filter((item) => item.productId !== productId));
+  }
+
+  async function checkoutSale() {
+    setSaleError("");
+    setSaleMessage("");
+
+    if (!cart.length) {
+      setSaleError("No hay productos en el carrito.");
+      return;
+    }
+
+    try {
+      const payload = {
+        paymentMethod,
+        items: cart.map((item) => ({
+          productId: item.productId,
+          quantity: item.quantity
+        }))
+      };
+
+      const data = await api.createSale(payload);
+      const sale = data.sale;
+
+      setSaleMessage(`Factura ${sale.invoice_number} creada por ${money(sale.total_amount)}.`);
+      setCart([]);
+      await reloadProductsAndStats();
+    } catch (err) {
+      setSaleError(err.message);
+    }
+  }
+
+  async function openCashSession() {
+    setCashMessage("");
+    try {
+      await api.openCash(Number(openingAmount));
+      setCashMessage("Caja abierta correctamente.");
+      setOpeningAmount("0");
+      await loadDashboard();
+    } catch (err) {
+      setCashMessage(err.message);
+    }
+  }
+
+  async function closeCashSession() {
+    setCashMessage("");
+    try {
+      const data = await api.closeCash(Number(closingAmount));
+      setCashMessage(
+        `Caja cerrada. Esperado: ${money(data.metrics.expectedAmount)} | Diferencia: ${money(data.metrics.differenceAmount)}`
+      );
+      setClosingAmount("0");
+      await loadDashboard();
+    } catch (err) {
+      setCashMessage(err.message);
+    }
+  }
+
+  async function applyPriceUpdate() {
+    setPriceMessage("");
+    const numericValue = Number(priceValue);
+
+    if (Number.isNaN(numericValue)) {
+      setPriceMessage("Ingresá un valor válido.");
+      return;
+    }
+
+    try {
+      const data = await api.bulkUpdatePrices({
+        mode: priceMode,
+        value: numericValue
+      });
+      setPriceMessage(`Se actualizaron ${data.affectedCount} productos.`);
+      setPriceValue("");
+      await reloadProductsAndStats();
+    } catch (err) {
+      setPriceMessage(err.message);
+    }
+  }
+
+  function clearInvoiceFilters() {
+    setInvoiceFilters({
+      invoiceQuery: "",
+      paymentMethod: "",
+      seller: "",
+      dateFrom: "",
+      dateTo: ""
+    });
+  }
+
+  async function openSaleDetail(saleId, { jumpToInvoices = false } = {}) {
+    if (!Number.isInteger(Number(saleId))) {
+      return;
+    }
+
+    if (jumpToInvoices) {
+      setActiveView("facturas");
+    }
+
+    setSelectedSaleId(Number(saleId));
+    setSelectedSaleError("");
+    setSelectedSaleLoading(true);
+
+    try {
+      const data = await api.getSale(Number(saleId));
+      setSelectedSaleDetail(data.sale || null);
+    } catch (err) {
+      setSelectedSaleDetail(null);
+      setSelectedSaleError(err.message);
+    } finally {
+      setSelectedSaleLoading(false);
+    }
+  }
+
+  async function generateArcaComprobanteForSale(saleId, { force = false, jumpToInvoices = false } = {}) {
+    if (!Number.isInteger(Number(saleId))) {
+      return;
+    }
+
+    if (jumpToInvoices) {
+      await openSaleDetail(Number(saleId), { jumpToInvoices: true });
+    }
+
+    setArcaMessage("");
+    setArcaError("");
+    setArcaLoadingSaleId(Number(saleId));
+
+    try {
+      const data = await api.generateArcaComprobante(Number(saleId), force);
+      setArcaMessage(data.message || "Comprobante ARCA generado correctamente.");
+      await reloadProductsAndStats();
+      await openSaleDetail(Number(saleId), { jumpToInvoices: true });
+    } catch (err) {
+      setArcaError(err.message);
+      await reloadProductsAndStats();
+      if (jumpToInvoices || selectedSaleId === Number(saleId)) {
+        await openSaleDetail(Number(saleId), { jumpToInvoices: true });
+      }
+    } finally {
+      setArcaLoadingSaleId(null);
+    }
+  }
+
+  function renderStockForm() {
+    if (!isFormOpen) {
+      return null;
+    }
+
+    return (
+      <section className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-sm">
+        <h2 className="mb-4 text-2xl font-bold">{editingId ? "Editar Producto" : "Agregar Producto"}</h2>
+
+        <form onSubmit={saveProduct} className="grid gap-3 md:grid-cols-2">
+          <input
+            className="rounded-xl border-2 border-slate-300 px-4 py-3"
+            placeholder="Código de barras"
+            value={form.barcode}
+            onChange={(e) => setForm({ ...form, barcode: e.target.value })}
+            required
+          />
+          <input
+            className="rounded-xl border-2 border-slate-300 px-4 py-3"
+            placeholder="Nombre del artículo"
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            required
+          />
+          <input
+            type="number"
+            step="0.01"
+            className="rounded-xl border-2 border-slate-300 px-4 py-3"
+            placeholder="Precio"
+            value={form.price}
+            onChange={(e) => setForm({ ...form, price: e.target.value })}
+            required
+          />
+          <input
+            type="number"
+            className="rounded-xl border-2 border-slate-300 px-4 py-3"
+            placeholder="Cantidad"
+            value={form.stock}
+            onChange={(e) => setForm({ ...form, stock: e.target.value })}
+            required
+          />
+          <div className="space-y-1">
+            <input
+              type="number"
+              className="w-full rounded-xl border-2 border-slate-300 px-4 py-3"
+              placeholder="Alerta mínima (ej: 2)"
+              value={form.low_stock_threshold}
+              onChange={(e) => setForm({ ...form, low_stock_threshold: e.target.value })}
+              required
+            />
+            <p className="px-1 text-sm text-slate-600">
+              Este valor indica el mínimo de unidades: si el stock actual es menor o igual, el producto queda en alerta.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-3 md:col-span-2">
+            <button
+              type="submit"
+              className="rounded-xl bg-emerald-600 px-5 py-3 text-lg font-bold text-white hover:bg-emerald-700"
+            >
+              Guardar
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsFormOpen(false)}
+              className="rounded-xl bg-slate-500 px-5 py-3 text-lg font-bold text-white hover:bg-slate-600"
+            >
+              Cancelar
+            </button>
+          </div>
+        </form>
+      </section>
+    );
+  }
+
+  function renderStockTable() {
+    return (
+      <section className="overflow-x-auto rounded-2xl bg-white p-2 shadow-sm ring-1 ring-slate-200">
+        <h2 className="px-2 py-2 text-2xl font-bold">Panel de Stock</h2>
+        <table className="min-w-full border-separate border-spacing-y-2">
+          <thead>
+            <tr className="text-left text-lg">
+              <th className="px-4 py-3">Artículo</th>
+              <th className="px-4 py-3">Precio</th>
+              <th className="px-4 py-3">Disponible</th>
+              <th className="px-4 py-3">Mínimo</th>
+              <th className="px-4 py-3">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {products.map((product) => {
+              const lowStock = Number(product.stock) <= Number(product.low_stock_threshold ?? 2);
+
+              return (
+                <tr key={product.id} className={`${lowStock ? "bg-red-50" : "bg-slate-50"} text-lg`}>
+                  <td className="rounded-l-xl px-4 py-3">
+                    <div>
+                      <p className="text-xl font-extrabold text-slate-900">{product.name}</p>
+                      <p className="text-sm text-slate-600">Código: {product.barcode}</p>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">{money(product.price)}</td>
+                  <td className={`px-4 py-3 font-bold ${lowStock ? "text-red-700" : "text-slate-900"}`}>
+                    <div className="flex items-center gap-2">
+                      <span>{product.stock}</span>
+                      {lowStock && (
+                        <span className="inline-flex rounded-full bg-red-200 px-2 py-1 text-xs font-bold uppercase text-red-800">
+                          En alerta
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">{product.low_stock_threshold ?? 2}</td>
+                  <td className="rounded-r-xl px-4 py-3">
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openEditForm(product)}
+                        className="rounded-lg bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeProduct(product.id)}
+                        className="rounded-lg bg-red-600 px-4 py-2 font-bold text-white hover:bg-red-700"
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+
+            {!products.length && (
+              <tr>
+                <td className="px-4 py-6 text-center text-lg text-slate-600" colSpan={5}>
+                  Aún no hay productos cargados.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+    );
+  }
+
+  function renderInicio() {
+    return (
+      <div className="space-y-4">
+        <SectionHero
+          title="Inicio"
+          description="Resumen operativo del día con accesos rápidos para tareas frecuentes."
+        />
+
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <article className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-emerald-100 p-4 shadow-sm">
+            <h3 className="text-base font-bold text-emerald-700">Unidades en Stock</h3>
+            <p className="mt-2 text-3xl font-extrabold text-emerald-900">{stats?.unitsInStock ?? 0}</p>
+          </article>
+          <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-blue-100 p-4 shadow-sm">
+            <h3 className="text-base font-bold text-blue-700">Productos Cargados</h3>
+            <p className="mt-2 text-3xl font-extrabold text-blue-900">{stats?.productCount ?? 0}</p>
+          </article>
+          <article className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-indigo-100 p-4 shadow-sm">
+            <h3 className="text-base font-bold text-indigo-700">Producto Más Vendido</h3>
+            <p className="mt-2 text-lg font-bold text-indigo-900">
+              {stats?.topProduct ? `${stats.topProduct.name} (${stats.topProduct.total_units} u.)` : "Sin ventas todavía"}
+            </p>
+          </article>
+          <article className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-amber-100 p-4 shadow-sm">
+            <h3 className="text-base font-bold text-amber-700">Alertas de Stock</h3>
+            <p className="mt-2 text-3xl font-extrabold text-amber-900">{stats?.lowStockCount ?? 0}</p>
+          </article>
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-2">
+          <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h3 className="text-xl font-bold text-slate-900">Accesos rápidos</h3>
+            <p className="mt-1 text-sm text-slate-600">Navegá directo a las acciones más usadas.</p>
+            <div className="mt-3 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => setActiveView("ventas")}
+                className="rounded-xl bg-blue-600 px-5 py-3 text-lg font-bold text-white hover:bg-blue-700"
+              >
+                Ir a Ventas
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveView("stock");
+                  openCreateForm();
+                }}
+                className="rounded-xl bg-emerald-600 px-5 py-3 text-lg font-bold text-white hover:bg-emerald-700"
+              >
+                Cargar Producto
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveView("caja")}
+                className="rounded-xl bg-slate-700 px-5 py-3 text-lg font-bold text-white hover:bg-slate-800"
+              >
+                Abrir/Cerrar Caja
+              </button>
+            </div>
+          </article>
+
+          <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h3 className="text-xl font-bold text-slate-900">Alertas pendientes</h3>
+            <p className="mt-1 text-sm text-slate-600">Productos con stock por debajo del mínimo configurado.</p>
+            <div className="mt-3 space-y-2">
+              {lowStockProducts.slice(0, 4).map((product) => (
+                <div key={product.id} className="rounded-lg bg-red-100 p-3 text-red-900">
+                  <p className="font-bold">{product.name}</p>
+                  <p className="text-sm">Stock actual: {product.stock}</p>
+                </div>
+              ))}
+              {!lowStockProducts.length && (
+                <p className="rounded-lg bg-emerald-100 p-3 text-emerald-800">No hay alertas de stock.</p>
+              )}
+            </div>
+          </article>
+        </section>
+      </div>
+    );
+  }
+
+  function renderStock() {
+    return (
+      <div className="space-y-4">
+        <SectionHero
+          title="Stock"
+          description="Administrá productos, alertas de mínimo y mantenimiento general del inventario."
+        />
+
+        <section className="grid gap-3 md:grid-cols-3">
+          <article className="rounded-2xl bg-blue-100 p-4 shadow-sm">
+            <p className="text-sm font-bold uppercase text-blue-700">Productos</p>
+            <p className="mt-1 text-2xl font-extrabold text-blue-900">{products.length}</p>
+          </article>
+          <article className="rounded-2xl bg-emerald-100 p-4 shadow-sm">
+            <p className="text-sm font-bold uppercase text-emerald-700">Unidades en Stock</p>
+            <p className="mt-1 text-2xl font-extrabold text-emerald-900">{stats?.unitsInStock ?? 0}</p>
+          </article>
+          <article className="rounded-2xl bg-amber-100 p-4 shadow-sm">
+            <p className="text-sm font-bold uppercase text-amber-700">Alertas</p>
+            <p className="mt-1 text-2xl font-extrabold text-amber-900">{stats?.lowStockCount ?? 0}</p>
+          </article>
+        </section>
+
+        <section className="rounded-2xl bg-blue-50 p-4 shadow-sm">
+          <h3 className="mb-2 text-2xl font-bold">Ajuste rápido de stock</h3>
+          <p className="text-slate-700">
+            Para sumar o restar stock sin editar el producto, usá la pantalla <strong>Ajuste Stock</strong>.
+          </p>
+          <button
+            type="button"
+            onClick={() => setActiveView("ajuste_stock")}
+            className="mt-4 rounded-xl bg-blue-600 px-5 py-3 text-lg font-bold text-white hover:bg-blue-700"
+          >
+            Ir a Ajuste Stock
+          </button>
+        </section>
+
+        {renderStockForm()}
+        {renderStockTable()}
+      </div>
+    );
+  }
+
+  function renderAjusteStock() {
+    return (
+      <div className="space-y-4">
+        <SectionHero
+          title="Ajuste Stock"
+          description="Actualizá unidades en tiempo real buscando por código o nombre del producto."
+        />
+
+        <section className="rounded-2xl bg-white p-4 shadow-sm">
+          <div className="max-w-xl">
+            <input
+              value={stockSearch}
+              onChange={(e) => setStockSearch(e.target.value)}
+              placeholder="Buscar por código o nombre"
+              className="w-full rounded-xl border-2 border-slate-300 px-4 py-3 text-lg"
+            />
+          </div>
+
+          {stockAdjustError && <p className="mt-3 rounded-lg bg-red-100 p-3 text-red-700">{stockAdjustError}</p>}
+          {stockAdjustMessage && <p className="mt-3 rounded-lg bg-emerald-100 p-3 text-emerald-700">{stockAdjustMessage}</p>}
+        </section>
+
+        <section className="grid gap-3 md:grid-cols-3">
+          <article className="rounded-2xl bg-emerald-100 p-4 shadow-sm">
+            <p className="text-sm font-bold uppercase text-emerald-700">Productos visibles</p>
+            <p className="mt-1 text-2xl font-extrabold text-emerald-900">{filteredStockProducts.length}</p>
+          </article>
+          <article className="rounded-2xl bg-slate-200 p-4 shadow-sm">
+            <p className="text-sm font-bold uppercase text-slate-600">Total productos</p>
+            <p className="mt-1 text-2xl font-extrabold text-slate-900">{products.length}</p>
+          </article>
+          <article className="rounded-2xl bg-amber-100 p-4 shadow-sm">
+            <p className="text-sm font-bold uppercase text-amber-700">Stock crítico</p>
+            <p className="mt-1 text-2xl font-extrabold text-amber-900">{stats?.lowStockCount ?? 0}</p>
+          </article>
+        </section>
+
+        <section className="space-y-3">
+          {filteredStockProducts.map((product) => (
+            <article
+              key={product.id}
+              className={`rounded-2xl p-4 shadow-sm ${
+                product.stock <= (product.low_stock_threshold ?? 2) ? "bg-red-50" : "bg-white"
+              }`}
+            >
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-xl font-bold">{product.name}</p>
+                  <p className="text-slate-600">Código: {product.barcode}</p>
+                  <p className={`text-lg font-bold ${product.stock <= (product.low_stock_threshold ?? 2) ? "text-red-700" : "text-slate-900"}`}>
+                    Stock actual: {product.stock}
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => adjustProductStock(product, -1)}
+                    disabled={Number(product.stock) <= 0}
+                    className="rounded-xl bg-red-600 px-5 py-3 text-2xl font-extrabold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    title="Restar 1"
+                  >
+                    -
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => adjustProductStock(product, 1)}
+                    className="rounded-xl bg-emerald-600 px-5 py-3 text-2xl font-extrabold text-white hover:bg-emerald-700"
+                    title="Sumar 1"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            </article>
+          ))}
+
+          {!filteredStockProducts.length && (
+            <p className="rounded-2xl bg-white p-4 text-lg text-slate-600 shadow-sm">
+              No se encontraron productos con ese criterio de búsqueda.
+            </p>
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  function renderVentas() {
+    const cartItemsCount = cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+
+    return (
+      <div className="space-y-4">
+        <SectionHero
+          title="Ventas"
+          description="Registrá ventas, armá carritos y emití facturas con seguimiento inmediato."
+        />
+
+        <section className="grid gap-3 md:grid-cols-2">
+          <article className="rounded-2xl bg-emerald-100 p-4 shadow-sm">
+            <p className="text-sm font-bold uppercase text-emerald-700">Carrito actual</p>
+            <p className="mt-1 text-2xl font-extrabold text-emerald-900">{cartItemsCount} items</p>
+          </article>
+          <article className={`rounded-2xl p-4 shadow-sm ${paymentMethodTone(paymentMethod)}`}>
+            <p className="text-sm font-bold uppercase">Medio seleccionado</p>
+            <p className="mt-1 text-2xl font-extrabold">{paymentMethodLabel(paymentMethod)}</p>
+          </article>
+        </section>
+
+        {(arcaMessage || arcaError) && (
+          <section className="space-y-2">
+            {arcaMessage && <p className="rounded-lg bg-emerald-100 p-3 text-emerald-800">{arcaMessage}</p>}
+            {arcaError && <p className="rounded-lg bg-red-100 p-3 text-red-700">{arcaError}</p>}
+          </section>
+        )}
+
+        <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <div className="grid gap-3 sm:grid-cols-1">
+            <div className="relative">
+              <input
+                value={saleBarcode}
+                onChange={(e) => {
+                  setSaleBarcode(e.target.value);
+                  setSaleError("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    addToCart();
+                  }
+                }}
+                placeholder="Buscar por código o nombre"
+                className="w-full rounded-xl border-2 border-slate-300 px-4 py-3"
+              />
+
+              {saleBarcode.trim() && (
+                <div className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                  {saleSuggestions.map((product) => (
+                    <button
+                      key={product.id}
+                      type="button"
+                      onClick={() => {
+                        addProductToCart(product);
+                      }}
+                      className="block w-full border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50 last:border-b-0"
+                    >
+                      <p className="font-bold text-slate-900">{product.name}</p>
+                      <p className="text-sm text-slate-600">
+                        Código: {product.barcode} | Stock: {product.stock}
+                      </p>
+                    </button>
+                  ))}
+
+                  {!saleSuggestions.length && (
+                    <p className="px-4 py-3 text-sm text-slate-600">
+                      No hay productos que coincidan.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setPaymentMethod("cash")}
+              className={`rounded-xl px-4 py-2 font-bold text-white ${paymentMethod === "cash" ? "bg-emerald-700 shadow-sm" : "bg-emerald-500"}`}
+            >
+              Efectivo
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaymentMethod("card")}
+              className={`rounded-xl px-4 py-2 font-bold text-white ${paymentMethod === "card" ? "bg-blue-700 shadow-sm" : "bg-blue-500"}`}
+            >
+              Tarjeta
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaymentMethod("transfer")}
+              className={`rounded-xl px-4 py-2 font-bold text-white ${paymentMethod === "transfer" ? "bg-indigo-700 shadow-sm" : "bg-indigo-500"}`}
+            >
+              Transferencia
+            </button>
+            <span className={`inline-flex items-center rounded-full px-3 py-2 text-sm font-bold ${paymentMethodTone(paymentMethod)}`}>
+              Seleccionado: {paymentMethodLabel(paymentMethod)}
+            </span>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            {cart.map((item) => (
+              <div key={item.productId} className="grid grid-cols-[1fr_90px_170px] items-center gap-2 rounded-lg bg-slate-100 p-2">
+                <p className="font-semibold">{item.name}</p>
+                <input
+                  type="number"
+                  min="1"
+                  max={item.maxStock}
+                  value={item.quantity}
+                  onChange={(e) => changeCartQuantity(item.productId, e.target.value)}
+                  className="rounded-lg border-2 border-slate-300 px-2 py-1"
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <span className="inline-flex min-w-[96px] items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-right text-base font-extrabold text-slate-900">
+                    {money(item.price * item.quantity)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeCartItem(item.productId)}
+                    className="rounded-lg bg-red-600 px-2 py-1 font-bold text-white hover:bg-red-700"
+                  >
+                    X
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {!cart.length && <p className="rounded-lg bg-slate-100 p-3 text-slate-700">Carrito vacío.</p>}
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-emerald-50 p-3">
+            <p className="text-2xl font-extrabold text-emerald-900">Total: {money(cartTotal)}</p>
+            <button
+              type="button"
+              onClick={checkoutSale}
+              className="rounded-xl bg-emerald-600 px-5 py-3 text-lg font-bold text-white hover:bg-emerald-700"
+            >
+              Cobrar y Facturar
+            </button>
+          </div>
+
+          {saleError && <p className="mt-3 rounded-lg bg-red-100 p-3 text-red-700">{saleError}</p>}
+          {saleMessage && <p className="mt-3 rounded-lg bg-emerald-100 p-3 text-emerald-700">{saleMessage}</p>}
+        </article>
+
+        <section className="overflow-x-auto rounded-2xl bg-white p-2 shadow-sm ring-1 ring-slate-200">
+          <h2 className="px-2 py-2 text-2xl font-bold">Últimas Ventas</h2>
+          <table className="min-w-full border-separate border-spacing-y-2">
+            <thead>
+              <tr className="text-left text-lg">
+                <th className="px-4 py-3">Factura</th>
+                <th className="px-4 py-3">Fecha</th>
+                <th className="px-4 py-3">Medio</th>
+                <th className="px-4 py-3">Items</th>
+                <th className="px-4 py-3">Total</th>
+                <th className="px-4 py-3">Vendedor</th>
+                <th className="px-4 py-3">ARCA</th>
+                <th className="px-4 py-3">Detalle</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sales.slice(0, 15).map((sale) => (
+                <tr key={sale.id} className="bg-slate-50 text-lg">
+                  <td className="rounded-l-xl px-4 py-3 font-semibold">{sale.invoice_number}</td>
+                  <td className="px-4 py-3">{new Date(sale.created_at).toLocaleString()}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex rounded-full px-3 py-1 text-sm font-bold ${paymentMethodTone(sale.payment_method)}`}>
+                      {paymentMethodLabel(sale.payment_method)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">{sale.item_count}</td>
+                  <td className="px-4 py-3 font-bold">{money(sale.total_amount)}</td>
+                  <td className="px-4 py-3">{sale.seller}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() => generateArcaComprobanteForSale(sale.id, { jumpToInvoices: true })}
+                      disabled={arcaLoadingSaleId === sale.id}
+                      className="rounded-lg bg-slate-700 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+                    >
+                      {arcaLoadingSaleId === sale.id ? "Procesando..." : "ARCA"}
+                    </button>
+                  </td>
+                  <td className="rounded-r-xl px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() => openSaleDetail(sale.id, { jumpToInvoices: true })}
+                      className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700"
+                    >
+                      Ver detalle
+                    </button>
+                  </td>
+                </tr>
+              ))}
+
+              {!sales.length && (
+                <tr>
+                  <td className="px-4 py-6 text-center text-lg text-slate-600" colSpan={8}>
+                    Aún no hay ventas registradas.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+      </div>
+    );
+  }
+
+  function renderCaja() {
+    const todaySalesTotal = Number(stats?.todaySalesTotal || 0);
+    const todayTickets = Number(stats?.todayTickets || 0);
+    const cashSalesTotal = Number(cash.metrics?.cashSalesTotal || 0);
+    const cashSalesCount = Number(cash.metrics?.cashSalesCount || 0);
+    const nonCashSalesTotal = Math.max(0, todaySalesTotal - cashSalesTotal);
+    const latestSales = sales.slice(0, 6);
+
+    return (
+      <div className="space-y-4">
+        <SectionHero
+          title="Caja"
+          description="Controlá apertura y cierre, esperado de efectivo y movimientos del día."
+        />
+
+        <article className="rounded-2xl bg-white p-4 shadow-sm">
+          <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-xl bg-slate-100 p-3">
+              <p className="text-sm font-bold uppercase text-slate-500">Total Hoy</p>
+              <p className="text-2xl font-extrabold">{money(todaySalesTotal)}</p>
+            </div>
+            <div className="rounded-xl bg-emerald-100 p-3">
+              <p className="text-sm font-bold uppercase text-emerald-700">Efectivo</p>
+              <p className="text-2xl font-extrabold text-emerald-800">{money(cashSalesTotal)}</p>
+              <p className="text-sm text-emerald-700">Tickets: {cashSalesCount}</p>
+            </div>
+            <div className="rounded-xl bg-blue-100 p-3">
+              <p className="text-sm font-bold uppercase text-blue-700">No Efectivo</p>
+              <p className="text-2xl font-extrabold text-blue-800">{money(nonCashSalesTotal)}</p>
+            </div>
+            <div className="rounded-xl bg-slate-100 p-3">
+              <p className="text-sm font-bold uppercase text-slate-500">Tickets Hoy</p>
+              <p className="text-2xl font-extrabold">{todayTickets}</p>
+            </div>
+          </section>
+
+          <section className="mt-4">
+            {cash.openSession ? (
+              <div className="space-y-3">
+                <p className="rounded-lg bg-emerald-100 p-3">
+                  Caja ABIERTA desde {new Date(cash.openSession.opened_at).toLocaleString()}
+                </p>
+                <p className="text-lg">Apertura: {money(cash.openSession.opening_amount)}</p>
+                <p className="text-lg">Ventas efectivo: {money(cash.metrics?.cashSalesTotal)}</p>
+                <p className="text-lg font-bold">Esperado: {money(cash.metrics?.expectedAmount)}</p>
+
+                <div className="flex flex-wrap gap-3">
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={closingAmount}
+                    onChange={(e) => setClosingAmount(e.target.value)}
+                    placeholder="Monto real de cierre"
+                    className="rounded-xl border-2 border-slate-300 px-4 py-3"
+                  />
+                  <button
+                    type="button"
+                    onClick={closeCashSession}
+                    className="rounded-xl bg-red-600 px-5 py-3 text-lg font-bold text-white hover:bg-red-700"
+                  >
+                    Cerrar Caja
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="rounded-lg bg-slate-100 p-3">Caja CERRADA.</p>
+                <div className="flex flex-wrap gap-3">
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={openingAmount}
+                    onChange={(e) => setOpeningAmount(e.target.value)}
+                    placeholder="Monto inicial"
+                    className="rounded-xl border-2 border-slate-300 px-4 py-3"
+                  />
+                  <button
+                    type="button"
+                    onClick={openCashSession}
+                    className="rounded-xl bg-emerald-600 px-5 py-3 text-lg font-bold text-white hover:bg-emerald-700"
+                  >
+                    Abrir Caja
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {cashMessage && <p className="mt-3 rounded-lg bg-slate-100 p-3">{cashMessage}</p>}
+        </article>
+
+        <section className="grid gap-4 lg:grid-cols-2">
+          <article className="rounded-2xl bg-white p-4 shadow-sm">
+            <h3 className="mb-3 text-xl font-bold">Desglose por Medio de Pago (Hoy)</h3>
+            <div className="space-y-2">
+              {paymentBreakdown.map((item) => (
+                <div key={item.payment_method} className="rounded-lg bg-slate-100 p-3">
+                  <p className="font-bold uppercase">{item.payment_method}</p>
+                  <p>Total: {money(item.total)} | Tickets: {item.count}</p>
+                </div>
+              ))}
+              {!paymentBreakdown.length && (
+                <p className="rounded-lg bg-slate-100 p-3">Sin movimientos hoy.</p>
+              )}
+            </div>
+          </article>
+
+          <article className="rounded-2xl bg-white p-4 shadow-sm">
+            <h3 className="mb-3 text-xl font-bold">Últimas Ventas</h3>
+            <div className="space-y-2">
+              {latestSales.map((sale) => (
+                <div key={sale.id} className="rounded-lg bg-slate-100 p-3">
+                  <p className="font-bold">{sale.invoice_number}</p>
+                  <p className="text-sm text-slate-600">{new Date(sale.created_at).toLocaleString()}</p>
+                  <p className="text-sm">
+                    {paymentMethodLabel(sale.payment_method)} | {sale.item_count} items | {money(sale.total_amount)}
+                  </p>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openSaleDetail(sale.id, { jumpToInvoices: true })}
+                      className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700"
+                    >
+                      Ver detalle
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => generateArcaComprobanteForSale(sale.id, { jumpToInvoices: true })}
+                      disabled={arcaLoadingSaleId === sale.id}
+                      className="rounded-lg bg-slate-700 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+                    >
+                      {arcaLoadingSaleId === sale.id ? "Procesando..." : "ARCA"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {!latestSales.length && (
+                <p className="rounded-lg bg-slate-100 p-3">Sin ventas registradas.</p>
+              )}
+            </div>
+          </article>
+        </section>
+
+        <article className="rounded-2xl bg-white p-4 shadow-sm">
+          <h3 className="mb-3 text-xl font-bold">Últimos cierres</h3>
+          <div className="space-y-2">
+            {cashHistory.slice(0, 8).map((session) => (
+              <div key={session.id} className="rounded-lg bg-slate-100 p-2 text-sm">
+                <p>
+                  #{session.id} - {session.status === "open" ? "Abierta" : "Cerrada"}
+                </p>
+                <p>
+                  Apertura {money(session.opening_amount)} | Cierre {money(session.closing_amount)} | Dif. {money(session.difference_amount)}
+                </p>
+              </div>
+            ))}
+            {!cashHistory.length && <p className="rounded-lg bg-slate-100 p-2">Sin historial aún.</p>}
+          </div>
+        </article>
+      </div>
+    );
+  }
+
+  function renderFacturas() {
+    const selected = selectedSaleDetail;
+
+    return (
+      <div className="space-y-4">
+        <SectionHero
+          title="Facturas"
+          description="Consultá el historial completo, filtrá por criterios y revisá el detalle de cada comprobante."
+        />
+
+        <section className="grid gap-3 md:grid-cols-3">
+          <article className="rounded-2xl bg-blue-100 p-4 shadow-sm">
+            <p className="text-sm font-bold uppercase text-blue-700">Facturas Totales</p>
+            <p className="mt-1 text-2xl font-extrabold text-blue-900">{sales.length}</p>
+          </article>
+          <article className="rounded-2xl bg-emerald-100 p-4 shadow-sm">
+            <p className="text-sm font-bold uppercase text-emerald-700">Facturas Filtradas</p>
+            <p className="mt-1 text-2xl font-extrabold text-emerald-900">{filteredInvoices.length}</p>
+          </article>
+          <article className="rounded-2xl bg-amber-100 p-4 shadow-sm">
+            <p className="text-sm font-bold uppercase text-amber-700">Venta Promedio</p>
+            <p className="mt-1 text-2xl font-extrabold text-amber-900">
+              {filteredInvoices.length
+                ? money(filteredInvoices.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0) / filteredInvoices.length)
+                : money(0)}
+            </p>
+          </article>
+        </section>
+
+        <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <input
+              value={invoiceFilters.invoiceQuery}
+              onChange={(e) => setInvoiceFilters((prev) => ({ ...prev, invoiceQuery: e.target.value }))}
+              placeholder="Buscar por factura o vendedor"
+              className="rounded-xl border-2 border-slate-300 px-4 py-3"
+            />
+
+            <select
+              value={invoiceFilters.paymentMethod}
+              onChange={(e) => setInvoiceFilters((prev) => ({ ...prev, paymentMethod: e.target.value }))}
+              className="rounded-xl border-2 border-slate-300 px-4 py-3"
+            >
+              <option value="">Todos los medios</option>
+              <option value="cash">Efectivo</option>
+              <option value="card">Tarjeta</option>
+              <option value="transfer">Transferencia</option>
+              <option value="other">Otro</option>
+            </select>
+
+            <select
+              value={invoiceFilters.seller}
+              onChange={(e) => setInvoiceFilters((prev) => ({ ...prev, seller: e.target.value }))}
+              className="rounded-xl border-2 border-slate-300 px-4 py-3"
+            >
+              <option value="">Todos los vendedores</option>
+              {invoiceSellers.map((seller) => (
+                <option key={seller} value={seller}>
+                  {seller}
+                </option>
+              ))}
+            </select>
+
+            <input
+              type="date"
+              value={invoiceFilters.dateFrom}
+              onChange={(e) => setInvoiceFilters((prev) => ({ ...prev, dateFrom: e.target.value }))}
+              className="rounded-xl border-2 border-slate-300 px-4 py-3"
+            />
+
+            <input
+              type="date"
+              value={invoiceFilters.dateTo}
+              onChange={(e) => setInvoiceFilters((prev) => ({ ...prev, dateTo: e.target.value }))}
+              className="rounded-xl border-2 border-slate-300 px-4 py-3"
+            />
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={clearInvoiceFilters}
+              className="rounded-xl bg-slate-200 px-4 py-2 font-bold text-slate-800 hover:bg-slate-300"
+            >
+              Limpiar filtros
+            </button>
+            <p className="text-sm text-slate-600">
+              Mostrando <span className="font-bold">{filteredInvoices.length}</span> de{" "}
+              <span className="font-bold">{sales.length}</span> facturas.
+            </p>
+          </div>
+        </article>
+
+        <section className="overflow-x-auto rounded-2xl bg-white p-2 shadow-sm ring-1 ring-slate-200">
+          <table className="min-w-full border-separate border-spacing-y-2">
+            <thead>
+              <tr className="text-left text-lg">
+                <th className="px-4 py-3">Factura</th>
+                <th className="px-4 py-3">Fecha</th>
+                <th className="px-4 py-3">Medio</th>
+                <th className="px-4 py-3">Items</th>
+                <th className="px-4 py-3">Total</th>
+                <th className="px-4 py-3">Vendedor</th>
+                <th className="px-4 py-3">Estado ARCA</th>
+                <th className="px-4 py-3">Detalle</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredInvoices.map((sale) => (
+                <tr key={sale.id} className={`text-lg ${selectedSaleId === sale.id ? "bg-amber-100" : "bg-slate-50"}`}>
+                  <td className="rounded-l-xl px-4 py-3 font-semibold">{sale.invoice_number}</td>
+                  <td className="px-4 py-3">{new Date(sale.created_at).toLocaleString()}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex rounded-full px-3 py-1 text-sm font-bold ${paymentMethodTone(sale.payment_method)}`}>
+                      {paymentMethodLabel(sale.payment_method)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">{sale.item_count}</td>
+                  <td className="px-4 py-3 font-bold">{money(sale.total_amount)}</td>
+                  <td className="px-4 py-3">{sale.seller}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex rounded-full px-3 py-1 text-sm font-bold ${arcaStatusTone(sale.arca_status)}`}>
+                      {arcaStatusLabel(sale.arca_status)}
+                    </span>
+                  </td>
+                  <td className="rounded-r-xl px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() => openSaleDetail(sale.id)}
+                      className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700"
+                    >
+                      Ver detalle
+                    </button>
+                  </td>
+                </tr>
+              ))}
+
+              {!filteredInvoices.length && (
+                <tr>
+                  <td className="px-4 py-6 text-center text-lg text-slate-600" colSpan={8}>
+                    No hay facturas que coincidan con los filtros.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </section>
+
+        <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          <h3 className="mb-3 text-xl font-bold">Detalle de Factura</h3>
+          {!selectedSaleId && <p className="rounded-lg bg-slate-100 p-3">Seleccioná una factura para ver su detalle.</p>}
+          {selectedSaleLoading && <p className="rounded-lg bg-slate-100 p-3">Cargando detalle...</p>}
+          {selectedSaleError && <p className="rounded-lg bg-red-100 p-3 text-red-700">{selectedSaleError}</p>}
+
+          {selected && !selectedSaleLoading && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-bold uppercase text-slate-500">ARCA</span>
+                  <span className={`inline-flex rounded-full px-3 py-1 text-sm font-bold ${arcaStatusTone(selected.arca_status)}`}>
+                    {arcaStatusLabel(selected.arca_status)}
+                  </span>
+                  {selected.arca_comprobante_id && (
+                    <span className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-bold text-indigo-800">
+                      ID: {selected.arca_comprobante_id}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    generateArcaComprobanteForSale(selected.id, {
+                      force: selected.arca_status === "issued",
+                      jumpToInvoices: true
+                    })
+                  }
+                  disabled={arcaLoadingSaleId === selected.id}
+                  className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-bold text-white hover:bg-slate-900 disabled:opacity-60"
+                >
+                  {arcaLoadingSaleId === selected.id
+                    ? "Generando..."
+                    : selected.arca_status === "issued"
+                    ? "Regenerar comprobante ARCA"
+                    : "Generar comprobante ARCA"}
+                </button>
+              </div>
+
+              {selected.arca_last_error && (
+                <p className="rounded-lg bg-red-100 p-3 text-red-700">
+                  Último error ARCA: {selected.arca_last_error}
+                </p>
+              )}
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-lg bg-indigo-100 p-3">
+                  <p className="text-sm font-bold uppercase text-indigo-700">Factura</p>
+                  <p className="text-lg font-extrabold">{selected.invoice_number}</p>
+                </div>
+                <div className="rounded-lg bg-blue-100 p-3">
+                  <p className="text-sm font-bold uppercase text-blue-700">Fecha</p>
+                  <p className="text-lg font-extrabold">{new Date(selected.created_at).toLocaleString()}</p>
+                </div>
+                <div className="rounded-lg bg-emerald-100 p-3">
+                  <p className="text-sm font-bold uppercase text-emerald-700">Vendedor</p>
+                  <p className="text-lg font-extrabold">{selected.seller}</p>
+                </div>
+                <div className="rounded-lg bg-amber-100 p-3">
+                  <p className="text-sm font-bold uppercase text-amber-700">Medio de pago</p>
+                  <p className="text-lg font-extrabold">{paymentMethodLabel(selected.payment_method)}</p>
+                </div>
+              </div>
+
+              <section className="overflow-x-auto rounded-xl bg-slate-50 p-2">
+                <table className="min-w-full border-separate border-spacing-y-2">
+                  <thead>
+                    <tr className="text-left text-base">
+                      <th className="px-3 py-2">Artículo</th>
+                      <th className="px-3 py-2">Talle/Color</th>
+                      <th className="px-3 py-2">Precio unitario</th>
+                      <th className="px-3 py-2">Cantidad</th>
+                      <th className="px-3 py-2">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(selected.items || []).map((item, index) => (
+                      <tr key={`${selected.id}-${item.product_id}-${index}`} className="bg-white">
+                        <td className="rounded-l-lg px-3 py-2 font-semibold">{item.product_name_snapshot}</td>
+                        <td className="px-3 py-2">{item.size_color_snapshot || "-"}</td>
+                        <td className="px-3 py-2">{money(item.unit_price)}</td>
+                        <td className="px-3 py-2">{item.quantity}</td>
+                        <td className="rounded-r-lg px-3 py-2 font-bold">{money(item.line_total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+
+              <div className="flex justify-end">
+                <p className="rounded-lg bg-emerald-100 px-4 py-2 text-xl font-extrabold text-emerald-900">
+                  Total factura: {money(selected.total_amount)}
+                </p>
+              </div>
+            </div>
+          )}
+        </article>
+      </div>
+    );
+  }
+
+  function renderPrecios() {
+    return (
+      <div className="space-y-4">
+        <SectionHero
+          title="Precios"
+          description="Aplicá actualizaciones masivas y monitoreá productos con riesgo de quiebre de stock."
+        />
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <article className="rounded-2xl bg-white p-4 shadow-sm">
+          <h2 className="mb-3 text-2xl font-bold">Actualización de Lista de Precios</h2>
+          <p className="mb-3 text-slate-600">Aplicá cambios masivos sin tocar producto por producto.</p>
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => setPriceMode("percentage")}
+                className={`rounded-xl px-4 py-2 font-bold text-white ${priceMode === "percentage" ? "bg-blue-700" : "bg-blue-500"}`}
+              >
+                Porcentaje
+              </button>
+              <button
+                type="button"
+                onClick={() => setPriceMode("fixed")}
+                className={`rounded-xl px-4 py-2 font-bold text-white ${priceMode === "fixed" ? "bg-slate-700" : "bg-slate-500"}`}
+              >
+                Precio Fijo
+              </button>
+            </div>
+
+            <input
+              type="number"
+              step="0.01"
+              value={priceValue}
+              onChange={(e) => setPriceValue(e.target.value)}
+              placeholder={priceMode === "percentage" ? "Ej: 10 para +10%, -5 para -5%" : "Nuevo precio único"}
+              className="w-full rounded-xl border-2 border-slate-300 px-4 py-3"
+            />
+
+            <button
+              type="button"
+              onClick={applyPriceUpdate}
+              className="rounded-xl bg-blue-600 px-5 py-3 text-lg font-bold text-white hover:bg-blue-700"
+            >
+              Actualizar Precios
+            </button>
+
+            {priceMessage && <p className="rounded-lg bg-slate-100 p-3">{priceMessage}</p>}
+          </div>
+          </article>
+
+          <article className="rounded-2xl bg-white p-4 shadow-sm">
+            <h2 className="mb-3 text-2xl font-bold">Productos con stock crítico</h2>
+            <div className="space-y-2">
+              {lowStockProducts.map((product) => (
+                <div key={product.id} className="rounded-lg bg-red-100 p-3 text-red-900">
+                  <p className="font-bold">{product.name}</p>
+                  <p>
+                    Disponible: {product.stock} | Mínimo: {product.low_stock_threshold}
+                  </p>
+                </div>
+              ))}
+              {!lowStockProducts.length && (
+                <p className="rounded-lg bg-emerald-100 p-3 text-emerald-800">No hay alertas de stock bajo.</p>
+              )}
+            </div>
+          </article>
+        </div>
+      </div>
+    );
+  }
+
+  function renderEstadisticas() {
+    const todaySalesTotal = Number(stats?.todaySalesTotal || 0);
+    const todayTickets = Number(stats?.todayTickets || 0);
+    const averageTicket = todayTickets > 0 ? todaySalesTotal / todayTickets : 0;
+
+    return (
+      <div className="space-y-4">
+        <SectionHero
+          title="Estadísticas"
+          description="Panel de control comercial con foco en ventas, tickets y rendimiento de productos."
+        />
+
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <article className="rounded-2xl bg-emerald-100 p-4 shadow-sm">
+            <h3 className="text-base font-bold text-emerald-700">Unidades en Stock</h3>
+            <p className="mt-2 text-3xl font-extrabold text-emerald-900">{stats?.unitsInStock ?? 0}</p>
+          </article>
+          <article className="rounded-2xl bg-blue-100 p-4 shadow-sm">
+            <h3 className="text-base font-bold text-blue-700">Alertas de Stock</h3>
+            <p className="mt-2 text-3xl font-extrabold text-blue-900">{stats?.lowStockCount ?? 0}</p>
+          </article>
+          <article className="rounded-2xl bg-amber-100 p-4 shadow-sm">
+            <h3 className="text-base font-bold text-amber-700">Productos Cargados</h3>
+            <p className="mt-2 text-3xl font-extrabold text-amber-900">{stats?.productCount ?? 0}</p>
+          </article>
+          <article className="rounded-2xl bg-indigo-100 p-4 shadow-sm">
+            <h3 className="text-base font-bold text-indigo-700">Ticket Promedio (Hoy)</h3>
+            <p className="mt-2 text-3xl font-extrabold text-indigo-900">{money(averageTicket)}</p>
+          </article>
+        </section>
+
+        <section className="grid gap-4 lg:grid-cols-2">
+          <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+            <h2 className="mb-3 text-2xl font-bold">Producto Más Vendido</h2>
+            {stats?.topProduct ? (
+              <div className="rounded-lg bg-emerald-100 p-4">
+                <p className="text-2xl font-bold text-emerald-900">{stats.topProduct.name}</p>
+                <p className="mt-2 text-xl font-extrabold text-emerald-800">{stats.topProduct.total_units} unidades vendidas</p>
+              </div>
+            ) : (
+              <p className="rounded-lg bg-slate-100 p-3">Sin ventas registradas todavía.</p>
+            )}
+          </article>
+
+          <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+            <h2 className="mb-3 text-2xl font-bold">Ventas por Medio de Pago (Hoy)</h2>
+            <div className="space-y-2">
+              {paymentBreakdown.map((item) => (
+                <div key={item.payment_method} className="rounded-lg bg-slate-100 p-3">
+                  <p className="font-bold uppercase">
+                    <span className={`inline-flex rounded-full px-3 py-1 text-sm ${paymentMethodTone(item.payment_method)}`}>
+                      {paymentMethodLabel(item.payment_method)}
+                    </span>
+                  </p>
+                  <p>
+                    Total: {money(item.total)} | Tickets: {item.count}
+                  </p>
+                </div>
+              ))}
+              {!paymentBreakdown.length && <p className="rounded-lg bg-slate-100 p-3">Sin movimientos hoy.</p>}
+            </div>
+          </article>
+        </section>
+      </div>
+    );
+  }
+
+  function renderActiveView() {
+    if (activeView === "stock") {
+      return renderStock();
+    }
+    if (activeView === "ajuste_stock") {
+      return renderAjusteStock();
+    }
+    if (activeView === "ventas") {
+      return renderVentas();
+    }
+    if (activeView === "caja") {
+      return renderCaja();
+    }
+    if (activeView === "facturas") {
+      return renderFacturas();
+    }
+    if (activeView === "precios") {
+      return renderPrecios();
+    }
+    if (activeView === "estadisticas") {
+      return renderEstadisticas();
+    }
+    return renderInicio();
+  }
+
+  if (loading) {
+    return <div className="min-h-screen p-8 text-xl">Cargando...</div>;
+  }
+
+  if (!user) {
+    return (
+      <main className="min-h-screen bg-[#090B0F] p-4 sm:p-8">
+        <section className="mx-auto max-w-md rounded-2xl border border-[#D4842B]/40 bg-[#11151B] p-6 shadow-[0_0_0_1px_rgba(212,132,43,0.15)]">
+          <img
+            src="/fito-logo.svg"
+            alt="Logo Fito Deportes"
+            className="mb-5 h-auto w-full rounded-xl border border-[#D4842B]/30 bg-[#090B0F] p-2"
+          />
+          <div className="mb-6 border-b border-[#D4842B]/30 pb-4">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#D4842B]">Deportes Fito</p>
+            <h1 className="mt-2 text-3xl font-extrabold text-white">Ingreso al Sistema</h1>
+            <p className="mt-2 text-sm text-slate-300">Venta de materiales de indumentaria y material deportivo</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <label className="block">
+              <span className="mb-2 block text-lg font-semibold text-slate-200">Usuario</span>
+              <select
+                className="w-full rounded-xl border-2 border-[#D4842B] bg-[#0D1117] px-4 py-3 font-semibold text-white"
+                value={loginForm.username}
+                onChange={(e) =>
+                  setLoginForm({
+                    username: e.target.value,
+                    password: e.target.value === "FitoAdmin" ? loginForm.password : ""
+                  })
+                }
+              >
+                <option value="Fito">Fito (Empleado)</option>
+                <option value="FitoAdmin">FitoAdmin (Administrador)</option>
+              </select>
+            </label>
+
+            {isAdminLogin && (
+              <label className="block">
+                <span className="mb-2 block text-lg font-semibold text-slate-200">Contraseña</span>
+                <input
+                  type="password"
+                  className="w-full rounded-xl border-2 border-[#D4842B] bg-[#0D1117] px-4 py-3 text-white placeholder:text-slate-400"
+                  placeholder="Ingresá la clave de administrador"
+                  value={loginForm.password}
+                  onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+                />
+              </label>
+            )}
+
+            {!isAdminLogin && (
+              <p className="rounded-lg border border-[#D4842B]/30 bg-[#1A1F27] p-3 text-base text-slate-200">
+                Usuario empleado seleccionado. No requiere contraseña.
+              </p>
+            )}
+
+            {loginError && <p className="rounded-lg bg-red-950/70 p-3 text-lg text-red-200">{loginError}</p>}
+
+            <button
+              type="submit"
+              className="w-full rounded-xl bg-[#D4842B] px-4 py-4 text-xl font-extrabold text-black hover:bg-[#E39A47]"
+            >
+              Ingresar
+            </button>
+          </form>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-slate-100 p-4 sm:p-6">
+      <div className="mx-auto max-w-7xl space-y-4">
+        <header className="rounded-2xl bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-44 max-w-full">
+                <img src="/fito-logo.svg" alt="Logo Fito Deportes" className="h-auto w-full rounded-lg border border-slate-200 bg-[#090B0F] p-1.5" />
+              </div>
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Sistema comercial</p>
+                <h1 className="text-3xl font-extrabold text-slate-900">Fito Deportes</h1>
+                <p className="text-sm text-slate-600">
+                  Gestión de stock, ventas, caja y facturación en una sola plataforma.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="rounded-xl bg-slate-100 px-4 py-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Usuario activo</p>
+                <p className="text-base font-bold text-slate-900">
+                  {user.username} <span className="text-slate-500">({user.role === "admin" ? "Administrador" : "Empleado"})</span>
+                </p>
+                <p className="text-xs text-slate-500">{new Date().toLocaleString()}</p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-100"
+                title="Cerrar sesión"
+              >
+                Log out
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-4">
+            <div className="rounded-xl bg-blue-50 p-3">
+              <p className="text-xs font-bold uppercase text-blue-600">Ventas Hoy</p>
+              <p className="text-xl font-extrabold text-blue-900">{money(stats?.todaySalesTotal)}</p>
+            </div>
+            <div className="rounded-xl bg-emerald-50 p-3">
+              <p className="text-xs font-bold uppercase text-emerald-600">Tickets Hoy</p>
+              <p className="text-xl font-extrabold text-emerald-900">{stats?.todayTickets ?? 0}</p>
+            </div>
+            <div className="rounded-xl bg-amber-50 p-3">
+              <p className="text-xs font-bold uppercase text-amber-600">Caja</p>
+              <p className="text-xl font-extrabold text-amber-900">{cash.openSession ? "Abierta" : "Cerrada"}</p>
+            </div>
+            <div className="rounded-xl bg-indigo-50 p-3">
+              <p className="text-xs font-bold uppercase text-indigo-600">Dólar E.E.U.U</p>
+              <p className="text-base font-extrabold text-indigo-900">
+                {Number.isFinite(usdQuote.sell) ? `Venta $${usdQuote.sell.toFixed(2)}` : "No disponible"}
+              </p>
+              <p className="text-xs text-indigo-700">
+                {Number.isFinite(usdQuote.buy) ? `Compra $${usdQuote.buy.toFixed(2)}` : ""}
+                {usdQuote.source ? ` ${usdQuote.source}` : ""}
+              </p>
+            </div>
+          </div>
+        </header>
+
+        {error && <p className="rounded-lg bg-red-100 p-3 text-lg text-red-700">{error}</p>}
+
+        <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
+          <aside className="rounded-2xl bg-white p-3 shadow-sm lg:sticky lg:top-4 lg:h-fit">
+            <p className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-500">Secciones</p>
+            <nav className="space-y-2">
+              {navItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActiveView(item.id)}
+                  className={`w-full rounded-xl px-4 py-3 text-left text-lg font-bold ${
+                    activeView === item.id
+                      ? "bg-[#D4842B] text-black"
+                      : "bg-slate-100 text-slate-800 hover:bg-slate-200"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </nav>
+
+            <div className="mt-4 rounded-xl bg-slate-100 p-3 text-sm">
+              <p>
+                Caja:{" "}
+                <span className={`font-bold ${cash.openSession ? "text-emerald-700" : "text-slate-700"}`}>
+                  {cash.openSession ? "Abierta" : "Cerrada"}
+                </span>
+              </p>
+              <p>
+                Alertas stock: <span className="font-bold text-red-700">{stats?.lowStockCount ?? 0}</span>
+              </p>
+              <p>
+                Ventas hoy: <span className="font-bold">{money(stats?.todaySalesTotal)}</span>
+              </p>
+            </div>
+          </aside>
+
+          <section>{renderActiveView()}</section>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+export default App;

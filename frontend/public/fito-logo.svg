@@ -1,0 +1,16 @@
+<svg width="900" height="260" viewBox="0 0 900 260" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="900" height="260" fill="#090B0F"/>
+  <g transform="translate(36,32)">
+    <path d="M174 8L194 28L174 48L154 28L174 8Z" fill="#C57C2C"/>
+    <path d="M214 8L234 28L214 48L194 28L214 8Z" fill="#8A5A24"/>
+    <path d="M254 8L274 28L254 48L234 28L254 8Z" fill="#C57C2C"/>
+    <path d="M214 48L234 68L214 88L194 68L214 48Z" fill="#C57C2C"/>
+    <path d="M254 48L274 68L254 88L234 68L254 48Z" fill="#8A5A24"/>
+    <rect x="24" y="62" width="150" height="9" rx="4.5" fill="#B16E2B"/>
+    <rect x="8" y="82" width="166" height="9" rx="4.5" fill="#C57C2C"/>
+    <rect x="0" y="102" width="174" height="9" rx="4.5" fill="#8A5A24"/>
+  </g>
+  <text x="36" y="148" fill="#E7EDF2" font-size="44" font-weight="800" font-family="Arial, sans-serif" letter-spacing="1">DEPORTES</text>
+  <text x="332" y="148" fill="#C57C2C" font-size="44" font-weight="800" font-family="Arial, sans-serif" letter-spacing="1">FITO</text>
+  <text x="38" y="192" fill="#AAB6C2" font-size="28" font-style="italic" font-family="Arial, sans-serif">MATERIAL DEPORTIVO</text>
+</svg>
