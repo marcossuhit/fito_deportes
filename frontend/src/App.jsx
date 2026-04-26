@@ -48,10 +48,42 @@ function arcaStatusTone(value) {
 
 function SectionHero({ title, description }) {
   return (
-    <section className="rounded-2xl bg-gradient-to-r from-[#111827] via-[#1e293b] to-[#0f766e] p-5 text-white shadow-sm">
-      <h2 className="text-2xl font-bold">{title}</h2>
-      <p className="mt-1 text-slate-200">{description}</p>
+    <section className="rounded-2xl border border-slate-800/60 bg-gradient-to-r from-[#0f172a] via-[#1e293b] to-[#0f766e] p-5 text-white shadow-sm">
+      <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-300">Vista</p>
+      <h2 className="mt-1 text-2xl font-bold">{title}</h2>
+      <p className="mt-2 max-w-3xl text-slate-200">{description}</p>
     </section>
+  );
+}
+
+function CollapsibleSection({ title, description, isOpen, onToggle, children, className = "" }) {
+  return (
+    <section className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm ${className}`}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-xl font-bold text-slate-900">{title}</h3>
+          {description ? <p className="text-sm text-slate-600">{description}</p> : null}
+        </div>
+        <button
+          type="button"
+          onClick={onToggle}
+          className="rounded-xl bg-slate-200 px-4 py-2 text-sm font-bold text-slate-800 hover:bg-slate-300"
+        >
+          {isOpen ? "Ver menos" : "Ver más"}
+        </button>
+      </div>
+
+      {isOpen ? <div className="mt-4">{children}</div> : null}
+    </section>
+  );
+}
+
+function GoldMedalBadge() {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border border-amber-300 bg-gradient-to-r from-amber-200 to-yellow-100 px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-amber-900">
+      <span className="h-2 w-2 rounded-full bg-amber-500" />
+      Medalla Oro
+    </span>
   );
 }
 
@@ -113,6 +145,14 @@ function App() {
     source: "",
     updatedAt: null
   });
+  const [expandedSections, setExpandedSections] = useState({
+    stock_panel: false,
+    ventas_recientes: false,
+    caja_analitica: false,
+    caja_historial: false,
+    facturas_detalle: false,
+    precios_stock_critico: false
+  });
 
   const cartTotal = useMemo(
     () => cart.reduce((sum, item) => sum + Number(item.price) * item.quantity, 0),
@@ -151,11 +191,11 @@ function App() {
   const navItems = [
     { id: "inicio", label: "Inicio" },
     { id: "ventas", label: "Ventas" },
+    { id: "caja", label: "Caja" },
+    { id: "precios", label: "Precios" },
+    { id: "facturas", label: "Facturas" },
     { id: "stock", label: "Stock" },
     { id: "ajuste_stock", label: "Ajuste Stock" },
-    { id: "caja", label: "Caja" },
-    { id: "facturas", label: "Facturas" },
-    { id: "precios", label: "Precios" },
     { id: "estadisticas", label: "Estadísticas" }
   ];
 
@@ -202,6 +242,13 @@ function App() {
     });
   }, [invoiceFilters, sales]);
 
+  function toggleSection(sectionId) {
+    setExpandedSections((prev) => ({
+      ...prev,
+      [sectionId]: !prev[sectionId]
+    }));
+  }
+
   useEffect(() => {
     bootstrap();
   }, []);
@@ -211,6 +258,19 @@ function App() {
     const timer = setInterval(fetchUsdQuote, 1000 * 60 * 10);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    setError("");
+    setStockAdjustMessage("");
+    setStockAdjustError("");
+    setSaleMessage("");
+    setSaleError("");
+    setCashMessage("");
+    setPriceMessage("");
+    setArcaMessage("");
+    setArcaError("");
+    setSelectedSaleError("");
+  }, [activeView]);
 
   async function fetchUsdQuote() {
     try {
@@ -718,7 +778,6 @@ function App() {
   function renderStockTable() {
     return (
       <section className="overflow-x-auto rounded-2xl bg-white p-2 shadow-sm ring-1 ring-slate-200">
-        <h2 className="px-2 py-2 text-2xl font-bold">Panel de Stock</h2>
         <table className="min-w-full border-separate border-spacing-y-2">
           <thead>
             <tr className="text-left text-lg">
@@ -796,38 +855,77 @@ function App() {
           description="Resumen operativo del día con accesos rápidos para tareas frecuentes."
         />
 
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <article className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-emerald-100 p-4 shadow-sm">
-            <h3 className="text-base font-bold text-emerald-700">Unidades en Stock</h3>
-            <p className="mt-2 text-3xl font-extrabold text-emerald-900">{stats?.unitsInStock ?? 0}</p>
-          </article>
-          <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-blue-100 p-4 shadow-sm">
-            <h3 className="text-base font-bold text-blue-700">Productos Cargados</h3>
-            <p className="mt-2 text-3xl font-extrabold text-blue-900">{stats?.productCount ?? 0}</p>
-          </article>
-          <article className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-indigo-100 p-4 shadow-sm">
-            <h3 className="text-base font-bold text-indigo-700">Producto Más Vendido</h3>
-            <p className="mt-2 text-lg font-bold text-indigo-900">
-              {stats?.topProduct ? `${stats.topProduct.name} (${stats.topProduct.total_units} u.)` : "Sin ventas todavía"}
+        <section className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+          <article className="rounded-2xl border border-slate-800/50 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 p-5 text-white shadow-sm">
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-300">Resumen del día</p>
+            <h3 className="mt-2 text-2xl font-extrabold">Visión general operativa</h3>
+            <p className="mt-2 text-slate-200">
+              Estado rápido del negocio para tomar decisiones sin navegar por todo el sistema.
             </p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-xl bg-white/10 p-3">
+                <p className="text-xs uppercase text-slate-300">Ventas hoy</p>
+                <p className="text-2xl font-extrabold text-blue-200">{money(stats?.todaySalesTotal)}</p>
+              </div>
+              <div className="rounded-xl bg-white/10 p-3">
+                <p className="text-xs uppercase text-slate-300">Tickets hoy</p>
+                <p className="text-2xl font-extrabold text-emerald-200">{stats?.todayTickets ?? 0}</p>
+              </div>
+              <div className="rounded-xl bg-white/10 p-3">
+                <p className="text-xs uppercase text-slate-300">Caja</p>
+                <p className={`text-2xl font-extrabold ${cash.openSession ? "text-emerald-300" : "text-amber-300"}`}>
+                  {cash.openSession ? "Abierta" : "Cerrada"}
+                </p>
+              </div>
+            </div>
           </article>
-          <article className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-amber-100 p-4 shadow-sm">
-            <h3 className="text-base font-bold text-amber-700">Alertas de Stock</h3>
-            <p className="mt-2 text-3xl font-extrabold text-amber-900">{stats?.lowStockCount ?? 0}</p>
+
+          <article className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 to-amber-100 p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-bold uppercase tracking-wide text-amber-700">Producto Más Vendido</p>
+              <GoldMedalBadge />
+            </div>
+            <p className="mt-2 text-xl font-extrabold text-amber-900">
+              {stats?.topProduct ? stats.topProduct.name : "Sin ventas todavía"}
+            </p>
+            <p className="mt-1 text-sm text-amber-800">
+              {stats?.topProduct ? `${stats.topProduct.total_units} unidades vendidas` : "Aún no hay datos para destacar."}
+            </p>
           </article>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-2">
-          <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <article className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-emerald-100 p-4 shadow-sm">
+            <h3 className="text-sm font-bold uppercase tracking-wide text-emerald-700">Unidades en Stock</h3>
+            <p className="mt-2 text-3xl font-extrabold text-emerald-900">{stats?.unitsInStock ?? 0}</p>
+          </article>
+          <article className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-blue-100 p-4 shadow-sm">
+            <h3 className="text-sm font-bold uppercase tracking-wide text-blue-700">Productos Cargados</h3>
+            <p className="mt-2 text-3xl font-extrabold text-blue-900">{stats?.productCount ?? 0}</p>
+          </article>
+          <article className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-indigo-100 p-4 shadow-sm">
+            <h3 className="text-sm font-bold uppercase tracking-wide text-indigo-700">Ticket Promedio</h3>
+            <p className="mt-2 text-3xl font-extrabold text-indigo-900">
+              {stats?.todayTickets ? money((Number(stats?.todaySalesTotal || 0) / Number(stats.todayTickets || 1))) : money(0)}
+            </p>
+          </article>
+          <article className="rounded-2xl border border-rose-200 bg-gradient-to-br from-rose-50 to-rose-100 p-4 shadow-sm">
+            <h3 className="text-sm font-bold uppercase tracking-wide text-rose-700">Alertas de Stock</h3>
+            <p className="mt-2 text-3xl font-extrabold text-rose-900">{stats?.lowStockCount ?? 0}</p>
+          </article>
+        </section>
+
+        <section className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+          <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm ring-1 ring-slate-200">
             <h3 className="text-xl font-bold text-slate-900">Accesos rápidos</h3>
-            <p className="mt-1 text-sm text-slate-600">Navegá directo a las acciones más usadas.</p>
-            <div className="mt-3 flex flex-wrap gap-3">
+            <p className="mt-1 text-sm text-slate-600">Navegá directo a las acciones de mayor uso.</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={() => setActiveView("ventas")}
-                className="rounded-xl bg-blue-600 px-5 py-3 text-lg font-bold text-white hover:bg-blue-700"
+                className="rounded-xl bg-blue-600 px-5 py-3 text-left text-lg font-bold text-white hover:bg-blue-700"
               >
-                Ir a Ventas
+                Nueva venta
               </button>
               <button
                 type="button"
@@ -835,32 +933,41 @@ function App() {
                   setActiveView("stock");
                   openCreateForm();
                 }}
-                className="rounded-xl bg-emerald-600 px-5 py-3 text-lg font-bold text-white hover:bg-emerald-700"
+                className="rounded-xl bg-emerald-600 px-5 py-3 text-left text-lg font-bold text-white hover:bg-emerald-700"
               >
                 Cargar Producto
               </button>
               <button
                 type="button"
                 onClick={() => setActiveView("caja")}
-                className="rounded-xl bg-slate-700 px-5 py-3 text-lg font-bold text-white hover:bg-slate-800"
+                className="rounded-xl bg-slate-700 px-5 py-3 text-left text-lg font-bold text-white hover:bg-slate-800"
               >
                 Abrir/Cerrar Caja
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveView("facturas")}
+                className="rounded-xl bg-amber-600 px-5 py-3 text-left text-lg font-bold text-white hover:bg-amber-700"
+              >
+                Revisar facturas
               </button>
             </div>
           </article>
 
-          <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <h3 className="text-xl font-bold text-slate-900">Alertas pendientes</h3>
-            <p className="mt-1 text-sm text-slate-600">Productos con stock por debajo del mínimo configurado.</p>
+          <article className="rounded-2xl border border-slate-800/50 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 p-5 text-white shadow-sm">
+            <h3 className="text-xl font-bold text-white">Alertas pendientes</h3>
+            <p className="mt-1 text-sm text-slate-300">Productos con stock por debajo del mínimo configurado.</p>
             <div className="mt-3 space-y-2">
               {lowStockProducts.slice(0, 4).map((product) => (
-                <div key={product.id} className="rounded-lg bg-red-100 p-3 text-red-900">
+                <div key={product.id} className="rounded-lg border border-red-500/30 bg-red-500/20 p-3 text-red-100">
                   <p className="font-bold">{product.name}</p>
                   <p className="text-sm">Stock actual: {product.stock}</p>
                 </div>
               ))}
               {!lowStockProducts.length && (
-                <p className="rounded-lg bg-emerald-100 p-3 text-emerald-800">No hay alertas de stock.</p>
+                <p className="rounded-lg border border-emerald-500/30 bg-emerald-500/20 p-3 text-emerald-100">
+                  No hay alertas de stock.
+                </p>
               )}
             </div>
           </article>
@@ -906,8 +1013,27 @@ function App() {
           </button>
         </section>
 
-        {renderStockForm()}
-        {renderStockTable()}
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h3 className="mb-3 text-2xl font-bold text-slate-900">{editingId ? "Editar producto" : "Agregar producto"}</h3>
+          {renderStockForm() || (
+            <button
+              type="button"
+              onClick={openCreateForm}
+              className="rounded-xl bg-emerald-600 px-5 py-3 text-lg font-bold text-white hover:bg-emerald-700"
+            >
+              Cargar nuevo producto
+            </button>
+          )}
+        </section>
+
+        <CollapsibleSection
+          title="Panel de Stock"
+          description="Listado completo de inventario y acciones de mantenimiento."
+          isOpen={expandedSections.stock_panel}
+          onToggle={() => toggleSection("stock_panel")}
+        >
+          {renderStockTable()}
+        </CollapsibleSection>
       </div>
     );
   }
@@ -1145,9 +1271,14 @@ function App() {
           {saleMessage && <p className="mt-3 rounded-lg bg-emerald-100 p-3 text-emerald-700">{saleMessage}</p>}
         </article>
 
-        <section className="overflow-x-auto rounded-2xl bg-white p-2 shadow-sm ring-1 ring-slate-200">
-          <h2 className="px-2 py-2 text-2xl font-bold">Últimas Ventas</h2>
-          <table className="min-w-full border-separate border-spacing-y-2">
+        <CollapsibleSection
+          title="Últimas ventas"
+          description="Historial rápido de los tickets más recientes."
+          isOpen={expandedSections.ventas_recientes}
+          onToggle={() => toggleSection("ventas_recientes")}
+        >
+          <section className="overflow-x-auto rounded-2xl bg-white p-2 shadow-sm ring-1 ring-slate-200">
+            <table className="min-w-full border-separate border-spacing-y-2">
             <thead>
               <tr className="text-left text-lg">
                 <th className="px-4 py-3">Factura</th>
@@ -1203,8 +1334,9 @@ function App() {
                 </tr>
               )}
             </tbody>
-          </table>
-        </section>
+            </table>
+          </section>
+        </CollapsibleSection>
       </div>
     );
   }
@@ -1300,60 +1432,71 @@ function App() {
           {cashMessage && <p className="mt-3 rounded-lg bg-slate-100 p-3">{cashMessage}</p>}
         </article>
 
-        <section className="grid gap-4 lg:grid-cols-2">
-          <article className="rounded-2xl bg-white p-4 shadow-sm">
-            <h3 className="mb-3 text-xl font-bold">Desglose por Medio de Pago (Hoy)</h3>
-            <div className="space-y-2">
-              {paymentBreakdown.map((item) => (
-                <div key={item.payment_method} className="rounded-lg bg-slate-100 p-3">
-                  <p className="font-bold uppercase">{item.payment_method}</p>
-                  <p>Total: {money(item.total)} | Tickets: {item.count}</p>
-                </div>
-              ))}
-              {!paymentBreakdown.length && (
-                <p className="rounded-lg bg-slate-100 p-3">Sin movimientos hoy.</p>
-              )}
-            </div>
-          </article>
-
-          <article className="rounded-2xl bg-white p-4 shadow-sm">
-            <h3 className="mb-3 text-xl font-bold">Últimas Ventas</h3>
-            <div className="space-y-2">
-              {latestSales.map((sale) => (
-                <div key={sale.id} className="rounded-lg bg-slate-100 p-3">
-                  <p className="font-bold">{sale.invoice_number}</p>
-                  <p className="text-sm text-slate-600">{new Date(sale.created_at).toLocaleString()}</p>
-                  <p className="text-sm">
-                    {paymentMethodLabel(sale.payment_method)} | {sale.item_count} items | {money(sale.total_amount)}
-                  </p>
-                  <div className="mt-2 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openSaleDetail(sale.id, { jumpToInvoices: true })}
-                      className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700"
-                    >
-                      Ver detalle
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => generateArcaComprobanteForSale(sale.id, { jumpToInvoices: true })}
-                      disabled={arcaLoadingSaleId === sale.id}
-                      className="rounded-lg bg-slate-700 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
-                    >
-                      {arcaLoadingSaleId === sale.id ? "Procesando..." : "ARCA"}
-                    </button>
+        <CollapsibleSection
+          title="Análisis y últimas ventas"
+          description="Desglose por medios de pago y movimiento reciente."
+          isOpen={expandedSections.caja_analitica}
+          onToggle={() => toggleSection("caja_analitica")}
+        >
+          <section className="grid gap-4 lg:grid-cols-2">
+            <article className="rounded-2xl bg-white p-4 shadow-sm">
+              <h3 className="mb-3 text-xl font-bold">Desglose por Medio de Pago (Hoy)</h3>
+              <div className="space-y-2">
+                {paymentBreakdown.map((item) => (
+                  <div key={item.payment_method} className="rounded-lg bg-slate-100 p-3">
+                    <p className="font-bold uppercase">{item.payment_method}</p>
+                    <p>Total: {money(item.total)} | Tickets: {item.count}</p>
                   </div>
-                </div>
-              ))}
-              {!latestSales.length && (
-                <p className="rounded-lg bg-slate-100 p-3">Sin ventas registradas.</p>
-              )}
-            </div>
-          </article>
-        </section>
+                ))}
+                {!paymentBreakdown.length && (
+                  <p className="rounded-lg bg-slate-100 p-3">Sin movimientos hoy.</p>
+                )}
+              </div>
+            </article>
 
-        <article className="rounded-2xl bg-white p-4 shadow-sm">
-          <h3 className="mb-3 text-xl font-bold">Últimos cierres</h3>
+            <article className="rounded-2xl bg-white p-4 shadow-sm">
+              <h3 className="mb-3 text-xl font-bold">Últimas Ventas</h3>
+              <div className="space-y-2">
+                {latestSales.map((sale) => (
+                  <div key={sale.id} className="rounded-lg bg-slate-100 p-3">
+                    <p className="font-bold">{sale.invoice_number}</p>
+                    <p className="text-sm text-slate-600">{new Date(sale.created_at).toLocaleString()}</p>
+                    <p className="text-sm">
+                      {paymentMethodLabel(sale.payment_method)} | {sale.item_count} items | {money(sale.total_amount)}
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openSaleDetail(sale.id, { jumpToInvoices: true })}
+                        className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700"
+                      >
+                        Ver detalle
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => generateArcaComprobanteForSale(sale.id, { jumpToInvoices: true })}
+                        disabled={arcaLoadingSaleId === sale.id}
+                        className="rounded-lg bg-slate-700 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
+                      >
+                        {arcaLoadingSaleId === sale.id ? "Procesando..." : "ARCA"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {!latestSales.length && (
+                  <p className="rounded-lg bg-slate-100 p-3">Sin ventas registradas.</p>
+                )}
+              </div>
+            </article>
+          </section>
+        </CollapsibleSection>
+
+        <CollapsibleSection
+          title="Últimos cierres"
+          description="Historial de aperturas y cierres de caja."
+          isOpen={expandedSections.caja_historial}
+          onToggle={() => toggleSection("caja_historial")}
+        >
           <div className="space-y-2">
             {cashHistory.slice(0, 8).map((session) => (
               <div key={session.id} className="rounded-lg bg-slate-100 p-2 text-sm">
@@ -1367,7 +1510,7 @@ function App() {
             ))}
             {!cashHistory.length && <p className="rounded-lg bg-slate-100 p-2">Sin historial aún.</p>}
           </div>
-        </article>
+        </CollapsibleSection>
       </div>
     );
   }
@@ -1520,8 +1663,13 @@ function App() {
           </table>
         </section>
 
-        <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-          <h3 className="mb-3 text-xl font-bold">Detalle de Factura</h3>
+        <CollapsibleSection
+          title="Detalle de factura"
+          description="Información completa de la factura seleccionada."
+          isOpen={expandedSections.facturas_detalle}
+          onToggle={() => toggleSection("facturas_detalle")}
+          className="ring-1 ring-slate-200"
+        >
           {!selectedSaleId && <p className="rounded-lg bg-slate-100 p-3">Seleccioná una factura para ver su detalle.</p>}
           {selectedSaleLoading && <p className="rounded-lg bg-slate-100 p-3">Cargando detalle...</p>}
           {selectedSaleError && <p className="rounded-lg bg-red-100 p-3 text-red-700">{selectedSaleError}</p>}
@@ -1616,7 +1764,7 @@ function App() {
               </div>
             </div>
           )}
-        </article>
+        </CollapsibleSection>
       </div>
     );
   }
@@ -1672,8 +1820,12 @@ function App() {
           </div>
           </article>
 
-          <article className="rounded-2xl bg-white p-4 shadow-sm">
-            <h2 className="mb-3 text-2xl font-bold">Productos con stock crítico</h2>
+          <CollapsibleSection
+            title="Productos con stock crítico"
+            description="Detalle de artículos por debajo del mínimo."
+            isOpen={expandedSections.precios_stock_critico}
+            onToggle={() => toggleSection("precios_stock_critico")}
+          >
             <div className="space-y-2">
               {lowStockProducts.map((product) => (
                 <div key={product.id} className="rounded-lg bg-red-100 p-3 text-red-900">
@@ -1687,7 +1839,7 @@ function App() {
                 <p className="rounded-lg bg-emerald-100 p-3 text-emerald-800">No hay alertas de stock bajo.</p>
               )}
             </div>
-          </article>
+          </CollapsibleSection>
         </div>
       </div>
     );
@@ -1726,7 +1878,10 @@ function App() {
 
         <section className="grid gap-4 lg:grid-cols-2">
           <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-            <h2 className="mb-3 text-2xl font-bold">Producto Más Vendido</h2>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="text-2xl font-bold">Producto Más Vendido</h2>
+              <GoldMedalBadge />
+            </div>
             {stats?.topProduct ? (
               <div className="rounded-lg bg-emerald-100 p-4">
                 <p className="text-2xl font-bold text-emerald-900">{stats.topProduct.name}</p>
@@ -1856,9 +2011,9 @@ function App() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-100 p-4 sm:p-6">
-      <div className="mx-auto max-w-7xl space-y-4">
-        <header className="rounded-2xl bg-white p-4 shadow-sm">
+    <main className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-100 to-slate-200 p-4 sm:p-6">
+      <div className="mx-auto max-w-7xl space-y-5">
+        <header className="rounded-2xl border border-[#D4842B] bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-4">
               <div className="w-44 max-w-full">
@@ -1893,37 +2048,40 @@ function App() {
             </div>
           </div>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-4">
-            <div className="rounded-xl bg-blue-50 p-3">
-              <p className="text-xs font-bold uppercase text-blue-600">Ventas Hoy</p>
-              <p className="text-xl font-extrabold text-blue-900">{money(stats?.todaySalesTotal)}</p>
+          <div className="mt-4 rounded-2xl border border-slate-700 bg-gradient-to-br from-slate-800 via-slate-800 to-slate-700 p-3 text-white shadow-inner">
+            <p className="mb-3 text-xs font-bold uppercase tracking-[0.14em] text-slate-300">Panel Operativo</p>
+            <div className="grid gap-3 sm:grid-cols-4">
+            <div className="rounded-xl border border-white/20 bg-white/10 p-3">
+              <p className="text-xs font-bold uppercase text-blue-200">Ventas Hoy</p>
+              <p className="text-xl font-extrabold text-blue-100">{money(stats?.todaySalesTotal)}</p>
             </div>
-            <div className="rounded-xl bg-emerald-50 p-3">
-              <p className="text-xs font-bold uppercase text-emerald-600">Tickets Hoy</p>
-              <p className="text-xl font-extrabold text-emerald-900">{stats?.todayTickets ?? 0}</p>
+            <div className="rounded-xl border border-white/20 bg-white/10 p-3">
+              <p className="text-xs font-bold uppercase text-emerald-200">Tickets Hoy</p>
+              <p className="text-xl font-extrabold text-emerald-100">{stats?.todayTickets ?? 0}</p>
             </div>
-            <div className="rounded-xl bg-amber-50 p-3">
-              <p className="text-xs font-bold uppercase text-amber-600">Caja</p>
-              <p className="text-xl font-extrabold text-amber-900">{cash.openSession ? "Abierta" : "Cerrada"}</p>
+            <div className="rounded-xl border border-white/20 bg-white/10 p-3">
+              <p className="text-xs font-bold uppercase text-amber-200">Caja</p>
+              <p className="text-xl font-extrabold text-amber-100">{cash.openSession ? "Abierta" : "Cerrada"}</p>
             </div>
-            <div className="rounded-xl bg-indigo-50 p-3">
-              <p className="text-xs font-bold uppercase text-indigo-600">Dólar E.E.U.U</p>
-              <p className="text-base font-extrabold text-indigo-900">
+            <div className="rounded-xl border border-white/20 bg-white/10 p-3">
+              <p className="text-xs font-bold uppercase text-indigo-200">Dólar E.E.U.U</p>
+              <p className="text-base font-extrabold text-indigo-100">
                 {Number.isFinite(usdQuote.sell) ? `Venta $${usdQuote.sell.toFixed(2)}` : "No disponible"}
               </p>
-              <p className="text-xs text-indigo-700">
+              <p className="text-xs text-indigo-200">
                 {Number.isFinite(usdQuote.buy) ? `Compra $${usdQuote.buy.toFixed(2)}` : ""}
                 {usdQuote.source ? ` ${usdQuote.source}` : ""}
               </p>
+            </div>
             </div>
           </div>
         </header>
 
         {error && <p className="rounded-lg bg-red-100 p-3 text-lg text-red-700">{error}</p>}
 
-        <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
-          <aside className="rounded-2xl bg-white p-3 shadow-sm lg:sticky lg:top-4 lg:h-fit">
-            <p className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-500">Secciones</p>
+        <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+          <aside className="rounded-2xl border border-slate-800/40 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 p-3 text-white shadow-sm lg:sticky lg:top-4 lg:h-fit">
+            <p className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-300">Secciones</p>
             <nav className="space-y-2">
               {navItems.map((item) => (
                 <button
@@ -1932,8 +2090,8 @@ function App() {
                   onClick={() => setActiveView(item.id)}
                   className={`w-full rounded-xl px-4 py-3 text-left text-lg font-bold ${
                     activeView === item.id
-                      ? "bg-[#D4842B] text-black"
-                      : "bg-slate-100 text-slate-800 hover:bg-slate-200"
+                      ? "bg-[#D4842B] text-black shadow-sm"
+                      : "border border-white/20 bg-white/10 text-slate-100 hover:bg-white/20"
                   }`}
                 >
                   {item.label}
@@ -1941,23 +2099,26 @@ function App() {
               ))}
             </nav>
 
-            <div className="mt-4 rounded-xl bg-slate-100 p-3 text-sm">
-              <p>
-                Caja:{" "}
-                <span className={`font-bold ${cash.openSession ? "text-emerald-700" : "text-slate-700"}`}>
-                  {cash.openSession ? "Abierta" : "Cerrada"}
-                </span>
-              </p>
-              <p>
-                Alertas stock: <span className="font-bold text-red-700">{stats?.lowStockCount ?? 0}</span>
-              </p>
-              <p>
-                Ventas hoy: <span className="font-bold">{money(stats?.todaySalesTotal)}</span>
-              </p>
+            <div className="mt-4 rounded-xl border border-slate-800/40 bg-gradient-to-br from-slate-800 via-slate-800 to-slate-700 p-4 text-white shadow-inner">
+              <p className="mb-3 text-xs font-bold uppercase tracking-[0.16em] text-slate-300">Estado En Vivo</p>
+              <div className="space-y-3">
+                <div className="rounded-lg bg-white/10 p-3">
+                  <p className="text-xs uppercase text-slate-300">Caja</p>
+                  <p className={`text-lg font-extrabold ${cash.openSession ? "text-emerald-300" : "text-amber-300"}`}>
+                    {cash.openSession ? "Abierta" : "Cerrada"}
+                  </p>
+                </div>
+                <div className="rounded-lg bg-white/10 p-3">
+                  <p className="text-xs uppercase text-slate-300">Alertas de Stock</p>
+                  <p className="text-lg font-extrabold text-red-300">{stats?.lowStockCount ?? 0}</p>
+                </div>
+              </div>
             </div>
           </aside>
 
-          <section>{renderActiveView()}</section>
+          <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-3 sm:p-4">
+            {renderActiveView()}
+          </section>
         </div>
       </div>
     </main>
