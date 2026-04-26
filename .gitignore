@@ -3,3 +3,8 @@ frontend/node_modules
 backend/data/*.db
 backend/.env
 frontend/dist
+
+backend/data/*.db-wal
+backend/data/*.db-shm
+backend/data/*.sqlite
+backend/data/*.sqlite3
