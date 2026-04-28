@@ -1,4 +1,5 @@
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({ path: path.resolve(__dirname, "..", ".env") });
 
 const express = require("express");
 const cors = require("cors");
@@ -10,10 +11,12 @@ const productRoutes = require("./routes/products");
 const salesRoutes = require("./routes/sales");
 const cashRoutes = require("./routes/cash");
 const statsRoutes = require("./routes/stats");
+const clientsRoutes = require("./routes/clients");
 const { requireAuth } = require("./middleware/auth");
 
 const app = express();
 const port = Number(process.env.PORT || 3001);
+const jsonLimit = process.env.JSON_BODY_LIMIT || "5mb";
 
 app.use(
   cors({
@@ -22,7 +25,8 @@ app.use(
   })
 );
 
-app.use(express.json());
+app.use(express.json({ limit: jsonLimit }));
+app.use(express.urlencoded({ extended: true, limit: jsonLimit }));
 
 app.use(
   session({
@@ -47,8 +51,15 @@ app.use("/api/products", requireAuth, productRoutes);
 app.use("/api/sales", requireAuth, salesRoutes);
 app.use("/api/cash", requireAuth, cashRoutes);
 app.use("/api/stats", requireAuth, statsRoutes);
+app.use("/api/clients", requireAuth, clientsRoutes);
 
 app.use((err, _req, res, _next) => {
+  if (err?.type === "entity.too.large") {
+    return res.status(413).json({
+      message: `El contenido enviado es demasiado grande. Limite actual: ${jsonLimit}.`
+    });
+  }
+
   console.error(err);
   res.status(500).json({ message: "Error interno del servidor." });
 });

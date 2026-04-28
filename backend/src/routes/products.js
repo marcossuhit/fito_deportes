@@ -2,11 +2,12 @@ const express = require("express");
 const db = require("../db");
 
 const router = express.Router();
+const IMAGE_DATA_URL_REGEX = /^data:image\/[a-zA-Z0-9.+-]+;base64,[a-zA-Z0-9+/=]+$/;
 
 router.get("/", (req, res) => {
   const products = db
     .prepare(
-      `SELECT id, barcode, name, size_color, price, stock, low_stock_threshold, created_at, updated_at
+      `SELECT id, barcode, name, brand, family, size_color, price, stock, low_stock_threshold, image_url, created_at, updated_at
        FROM products
        ORDER BY name ASC`
     )
@@ -26,7 +27,7 @@ router.get("/alerts/low-stock", (req, res) => {
   const products = threshold === null
     ? db
         .prepare(
-          `SELECT id, barcode, name, size_color, price, stock, low_stock_threshold, created_at, updated_at
+          `SELECT id, barcode, name, brand, family, size_color, price, stock, low_stock_threshold, image_url, created_at, updated_at
            FROM products
            WHERE stock <= low_stock_threshold
            ORDER BY stock ASC, name ASC`
@@ -34,7 +35,7 @@ router.get("/alerts/low-stock", (req, res) => {
         .all()
     : db
         .prepare(
-          `SELECT id, barcode, name, size_color, price, stock, low_stock_threshold, created_at, updated_at
+          `SELECT id, barcode, name, brand, family, size_color, price, stock, low_stock_threshold, image_url, created_at, updated_at
            FROM products
            WHERE stock <= ?
            ORDER BY stock ASC, name ASC`
@@ -131,16 +132,19 @@ router.post("/price-update", (req, res) => {
 });
 
 router.post("/", (req, res) => {
-  const { barcode, name, size_color, price, stock, low_stock_threshold } = req.body || {};
+  const { barcode, name, brand, family, size_color, price, stock, low_stock_threshold, image_url } = req.body || {};
 
-  if (!barcode || !name) {
-    return res.status(400).json({ message: "Código y nombre son obligatorios." });
+  if (!barcode || !name || !family) {
+    return res.status(400).json({ message: "Código, nombre y familia son obligatorios." });
   }
 
   const parsedPrice = Number(price);
   const parsedStock = Number(stock ?? 0);
   const parsedThreshold = Number(low_stock_threshold ?? 2);
+  const normalizedBrand = String(brand ?? "").trim();
+  const normalizedFamily = String(family ?? "").trim();
   const normalizedSizeColor = String(size_color ?? "").trim();
+  const normalizedImageUrl = String(image_url ?? "").trim();
 
   if (Number.isNaN(parsedPrice) || parsedPrice < 0) {
     return res.status(400).json({ message: "Precio inválido." });
@@ -154,16 +158,38 @@ router.post("/", (req, res) => {
     return res.status(400).json({ message: "Stock mínimo inválido." });
   }
 
+  if (!normalizedFamily) {
+    return res.status(400).json({ message: "Familia inválida." });
+  }
+
+  if (normalizedImageUrl && !IMAGE_DATA_URL_REGEX.test(normalizedImageUrl)) {
+    return res.status(400).json({ message: "Formato de imagen inválido." });
+  }
+
+  if (normalizedImageUrl.length > 3_000_000) {
+    return res.status(400).json({ message: "La imagen es demasiado grande." });
+  }
+
   try {
     const result = db
       .prepare(
-        `INSERT INTO products (barcode, name, size_color, price, stock, low_stock_threshold)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO products (barcode, name, brand, family, size_color, price, stock, low_stock_threshold, image_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(barcode, name, normalizedSizeColor, parsedPrice, parsedStock, parsedThreshold);
+      .run(
+        barcode,
+        name,
+        normalizedBrand,
+        normalizedFamily,
+        normalizedSizeColor,
+        parsedPrice,
+        parsedStock,
+        parsedThreshold,
+        normalizedImageUrl
+      );
 
     const product = db
-      .prepare("SELECT id, barcode, name, size_color, price, stock, low_stock_threshold, created_at, updated_at FROM products WHERE id = ?")
+      .prepare("SELECT id, barcode, name, brand, family, size_color, price, stock, low_stock_threshold, image_url, created_at, updated_at FROM products WHERE id = ?")
       .get(result.lastInsertRowid);
 
     return res.status(201).json({ product });
@@ -203,7 +229,7 @@ router.patch("/:id/threshold", (req, res) => {
 
   const product = db
     .prepare(
-      `SELECT id, barcode, name, size_color, price, stock, low_stock_threshold, created_at, updated_at
+      `SELECT id, barcode, name, brand, family, size_color, price, stock, low_stock_threshold, image_url, created_at, updated_at
        FROM products
        WHERE id = ?`
     )
@@ -214,22 +240,25 @@ router.patch("/:id/threshold", (req, res) => {
 
 router.put("/:id", (req, res) => {
   const id = Number(req.params.id);
-  const { barcode, name, size_color, price, stock, low_stock_threshold } = req.body || {};
+  const { barcode, name, brand, family, size_color, price, stock, low_stock_threshold, image_url } = req.body || {};
 
   if (!Number.isInteger(id)) {
     return res.status(400).json({ message: "ID inválido." });
   }
 
-  if (!barcode || !name) {
-    return res.status(400).json({ message: "Código y nombre son obligatorios." });
+  if (!barcode || !name || !family) {
+    return res.status(400).json({ message: "Código, nombre y familia son obligatorios." });
   }
 
   const parsedPrice = Number(price);
   const parsedStock = Number(stock);
   const hasThreshold = low_stock_threshold !== undefined;
   const parsedThreshold = hasThreshold ? Number(low_stock_threshold) : null;
+  const normalizedBrand = String(brand ?? "").trim();
+  const normalizedFamily = String(family ?? "").trim();
   const hasSizeColor = size_color !== undefined;
   const parsedSizeColor = hasSizeColor ? String(size_color ?? "").trim() : null;
+  const normalizedImageUrl = String(image_url ?? "").trim();
 
   if (Number.isNaN(parsedPrice) || parsedPrice < 0) {
     return res.status(400).json({ message: "Precio inválido." });
@@ -243,27 +272,53 @@ router.put("/:id", (req, res) => {
     return res.status(400).json({ message: "Stock mínimo inválido." });
   }
 
+  if (!normalizedFamily) {
+    return res.status(400).json({ message: "Familia inválida." });
+  }
+
+  if (normalizedImageUrl && !IMAGE_DATA_URL_REGEX.test(normalizedImageUrl)) {
+    return res.status(400).json({ message: "Formato de imagen inválido." });
+  }
+
+  if (normalizedImageUrl.length > 3_000_000) {
+    return res.status(400).json({ message: "La imagen es demasiado grande." });
+  }
+
   try {
     const result = db
       .prepare(
         `UPDATE products
          SET barcode = ?,
              name = ?,
+             brand = ?,
+             family = ?,
              size_color = COALESCE(?, size_color),
              price = ?,
              stock = ?,
              low_stock_threshold = COALESCE(?, low_stock_threshold),
+             image_url = ?,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`
       )
-      .run(barcode, name, parsedSizeColor, parsedPrice, parsedStock, parsedThreshold, id);
+      .run(
+        barcode,
+        name,
+        normalizedBrand,
+        normalizedFamily,
+        parsedSizeColor,
+        parsedPrice,
+        parsedStock,
+        parsedThreshold,
+        normalizedImageUrl,
+        id
+      );
 
     if (result.changes === 0) {
       return res.status(404).json({ message: "Producto no encontrado." });
     }
 
     const product = db
-      .prepare("SELECT id, barcode, name, size_color, price, stock, low_stock_threshold, created_at, updated_at FROM products WHERE id = ?")
+      .prepare("SELECT id, barcode, name, brand, family, size_color, price, stock, low_stock_threshold, image_url, created_at, updated_at FROM products WHERE id = ?")
       .get(id);
 
     return res.json({ product });
@@ -301,7 +356,7 @@ router.post("/scan", (req, res) => {
 
   const delta = Number.isInteger(quantityDelta) ? quantityDelta : 1;
   const product = db
-    .prepare("SELECT id, barcode, name, size_color, price, stock, low_stock_threshold, created_at, updated_at FROM products WHERE barcode = ?")
+    .prepare("SELECT id, barcode, name, brand, family, size_color, price, stock, low_stock_threshold, image_url, created_at, updated_at FROM products WHERE barcode = ?")
     .get(barcode);
 
   if (!product) {
@@ -316,7 +371,7 @@ router.post("/scan", (req, res) => {
   db.prepare("UPDATE products SET stock = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(nextStock, product.id);
 
   const updated = db
-    .prepare("SELECT id, barcode, name, size_color, price, stock, low_stock_threshold, created_at, updated_at FROM products WHERE id = ?")
+    .prepare("SELECT id, barcode, name, brand, family, size_color, price, stock, low_stock_threshold, image_url, created_at, updated_at FROM products WHERE id = ?")
     .get(product.id);
 
   return res.json({ product: updated });

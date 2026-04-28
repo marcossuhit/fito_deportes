@@ -69,6 +69,11 @@ export const api = {
 
   listSales: () => request("/sales"),
   getSale: (id) => request(`/sales/${id}`),
+  getSalePrintHtml: (id) => request(`/sales/${id}/print-html`),
+  sendSaleInvoiceEmail: (id) =>
+    request(`/sales/${id}/send-email`, {
+      method: "POST"
+    }),
   generateArcaComprobante: (id, force = false) =>
     request(`/sales/${id}/arca/generate`, {
       method: "POST",
@@ -94,5 +99,11 @@ export const api = {
     }),
 
   statsOverview: () => request("/stats/overview"),
-  topProducts: (limit = 10) => request(`/stats/top-products?limit=${limit}`)
+  topProducts: (limit = 10) => request(`/stats/top-products?limit=${limit}`),
+  listClients: () => request("/clients"),
+  createClient: (payload) =>
+    request("/clients", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    })
 };

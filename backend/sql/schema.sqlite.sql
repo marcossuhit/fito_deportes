@@ -11,10 +11,13 @@ CREATE TABLE IF NOT EXISTS products (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   barcode TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
+  brand TEXT NOT NULL DEFAULT '',
+  family TEXT NOT NULL DEFAULT '',
   size_color TEXT NOT NULL,
   price NUMERIC NOT NULL CHECK (price >= 0),
   stock INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
   low_stock_threshold INTEGER NOT NULL DEFAULT 2 CHECK (low_stock_threshold >= 0),
+  image_url TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -34,10 +37,22 @@ CREATE TABLE IF NOT EXISTS cash_sessions (
   FOREIGN KEY (closed_by_user_id) REFERENCES users (id)
 );
 
+CREATE TABLE IF NOT EXISTS clients (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  first_name TEXT NOT NULL,
+  last_name TEXT NOT NULL,
+  cuit TEXT NOT NULL UNIQUE,
+  phone TEXT NOT NULL,
+  email TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS sales (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   invoice_number TEXT UNIQUE,
   seller_user_id INTEGER NOT NULL,
+  customer_id INTEGER,
   cash_session_id INTEGER,
   payment_method TEXT NOT NULL CHECK (payment_method IN ('cash', 'card', 'transfer', 'other')),
   total_amount NUMERIC NOT NULL CHECK (total_amount >= 0),
@@ -48,6 +63,7 @@ CREATE TABLE IF NOT EXISTS sales (
   arca_response_payload TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (seller_user_id) REFERENCES users (id),
+  FOREIGN KEY (customer_id) REFERENCES clients (id),
   FOREIGN KEY (cash_session_id) REFERENCES cash_sessions (id)
 );
 
@@ -77,6 +93,7 @@ CREATE TABLE IF NOT EXISTS price_update_logs (
 CREATE INDEX IF NOT EXISTS idx_products_barcode ON products (barcode);
 CREATE INDEX IF NOT EXISTS idx_products_low_stock ON products (stock, low_stock_threshold);
 CREATE INDEX IF NOT EXISTS idx_cash_sessions_status ON cash_sessions (status);
+CREATE INDEX IF NOT EXISTS idx_clients_cuit ON clients (cuit);
 CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales (created_at);
 CREATE INDEX IF NOT EXISTS idx_sales_cash_session_id ON sales (cash_session_id);
 CREATE INDEX IF NOT EXISTS idx_sale_items_product_id ON sale_items (product_id);

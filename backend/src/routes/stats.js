@@ -51,6 +51,21 @@ router.get("/overview", (_req, res) => {
     )
     .get();
 
+  const salesByUserToday = db
+    .prepare(
+      `SELECT u.id AS user_id,
+              u.username,
+              COALESCE(SUM(s.total_amount), 0) AS total,
+              COUNT(s.id) AS ticket_count
+       FROM users u
+       LEFT JOIN sales s
+         ON s.seller_user_id = u.id
+        AND DATE(s.created_at, 'localtime') = DATE('now', 'localtime')
+       GROUP BY u.id, u.username
+       ORDER BY total DESC, ticket_count DESC, u.username ASC`
+    )
+    .all();
+
   return res.json({
     stats: {
       todaySalesTotal: Number(todaySales.total || 0),
@@ -60,7 +75,13 @@ router.get("/overview", (_req, res) => {
       lowStockCount: lowStockProducts.length,
       lowStockProducts,
       productCount: Number(inventoryTotals.product_count || 0),
-      unitsInStock: Number(inventoryTotals.units_in_stock || 0)
+      unitsInStock: Number(inventoryTotals.units_in_stock || 0),
+      salesByUserToday: salesByUserToday.map((item) => ({
+        userId: item.user_id,
+        username: item.username,
+        total: Number(item.total || 0),
+        ticketCount: Number(item.ticket_count || 0)
+      }))
     }
   });
 });

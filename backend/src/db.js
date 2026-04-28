@@ -44,6 +44,21 @@ function runMigrations() {
     "ALTER TABLE products ADD COLUMN low_stock_threshold INTEGER NOT NULL DEFAULT 2 CHECK (low_stock_threshold >= 0)"
   );
   addColumnIfMissing(
+    "products",
+    "brand",
+    "ALTER TABLE products ADD COLUMN brand TEXT NOT NULL DEFAULT ''"
+  );
+  addColumnIfMissing(
+    "products",
+    "family",
+    "ALTER TABLE products ADD COLUMN family TEXT NOT NULL DEFAULT ''"
+  );
+  addColumnIfMissing(
+    "products",
+    "image_url",
+    "ALTER TABLE products ADD COLUMN image_url TEXT NOT NULL DEFAULT ''"
+  );
+  addColumnIfMissing(
     "sales",
     "arca_status",
     "ALTER TABLE sales ADD COLUMN arca_status TEXT NOT NULL DEFAULT 'not_generated' CHECK (arca_status IN ('not_generated', 'pending', 'issued', 'error'))"
@@ -68,6 +83,13 @@ function runMigrations() {
     "arca_response_payload",
     "ALTER TABLE sales ADD COLUMN arca_response_payload TEXT"
   );
+  addColumnIfMissing(
+    "sales",
+    "customer_id",
+    "ALTER TABLE sales ADD COLUMN customer_id INTEGER"
+  );
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_sales_customer_id ON sales (customer_id)");
 }
 
 function seedPredefinedUsers() {
@@ -81,7 +103,10 @@ function seedPredefinedUsers() {
 
   const predefinedUsers = [
     { username: "FitoAdmin", role: "admin", requiresPassword: true, password: "JOAQUINA" },
-    { username: "Fito", role: "employee", requiresPassword: false, password: "__NO_PASSWORD__" }
+    { username: "Fito", role: "employee", requiresPassword: false, password: "__NO_PASSWORD__" },
+    { username: "Fito1", role: "employee", requiresPassword: false, password: "__NO_PASSWORD__" },
+    { username: "Fito2", role: "employee", requiresPassword: false, password: "__NO_PASSWORD__" },
+    { username: "Fito3", role: "employee", requiresPassword: false, password: "__NO_PASSWORD__" }
   ];
 
   for (const predefinedUser of predefinedUsers) {

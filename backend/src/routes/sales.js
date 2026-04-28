@@ -1,6 +1,13 @@
 const express = require("express");
 const db = require("../db");
 const { issueArcaComprobante } = require("../services/arca");
+const {
+  getInvoiceEmailConfigError,
+  isInvoiceEmailEnabled,
+  isValidEmail,
+  sendSaleInvoiceEmail
+} = require("../services/invoiceEmail");
+const { buildInvoiceHtml } = require("../services/invoiceTemplate");
 
 const router = express.Router();
 
@@ -16,6 +23,40 @@ function buildInvoiceNumber(saleId) {
   return `FAC-${yyyy}${mm}${dd}-${String(saleId).padStart(6, "0")}`;
 }
 
+function getSaleWithItems(id) {
+  const sale = db
+    .prepare(
+      `SELECT s.id, s.invoice_number, s.payment_method, s.total_amount, s.customer_id,
+              s.arca_status, s.arca_comprobante_id, s.arca_emitted_at, s.arca_last_error,
+              s.created_at,
+              u.username AS seller,
+              c.first_name AS customer_first_name,
+              c.last_name AS customer_last_name,
+              c.cuit AS customer_cuit,
+              c.email AS customer_email
+       FROM sales s
+       JOIN users u ON u.id = s.seller_user_id
+       LEFT JOIN clients c ON c.id = s.customer_id
+       WHERE s.id = ?`
+    )
+    .get(id);
+
+  if (!sale) {
+    return null;
+  }
+
+  const items = db
+    .prepare(
+      `SELECT product_id, product_name_snapshot, size_color_snapshot,
+              unit_price, quantity, line_total
+       FROM sale_items
+       WHERE sale_id = ?`
+    )
+    .all(id);
+
+  return { ...sale, items };
+}
+
 router.get("/", (_req, res) => {
   const sales = db
     .prepare(
@@ -24,14 +65,20 @@ router.get("/", (_req, res) => {
          s.invoice_number,
          s.payment_method,
          s.total_amount,
+         s.customer_id,
          s.arca_status,
          s.arca_comprobante_id,
          s.arca_emitted_at,
          s.created_at,
          u.username AS seller,
+         c.first_name AS customer_first_name,
+         c.last_name AS customer_last_name,
+         c.cuit AS customer_cuit,
+         c.email AS customer_email,
          (SELECT COALESCE(SUM(si.quantity), 0) FROM sale_items si WHERE si.sale_id = s.id) AS item_count
        FROM sales s
        JOIN users u ON u.id = s.seller_user_id
+       LEFT JOIN clients c ON c.id = s.customer_id
        ORDER BY s.created_at DESC`
     )
     .all();
@@ -45,32 +92,58 @@ router.get("/:id", (req, res) => {
     return res.status(400).json({ message: "ID de venta inválido." });
   }
 
-  const sale = db
-    .prepare(
-      `SELECT s.id, s.invoice_number, s.payment_method, s.total_amount,
-              s.arca_status, s.arca_comprobante_id, s.arca_emitted_at, s.arca_last_error,
-              s.created_at,
-              u.username AS seller
-       FROM sales s
-       JOIN users u ON u.id = s.seller_user_id
-       WHERE s.id = ?`
-    )
-    .get(id);
+  const sale = getSaleWithItems(id);
 
   if (!sale) {
     return res.status(404).json({ message: "Venta no encontrada." });
   }
 
-  const items = db
-    .prepare(
-      `SELECT product_id, product_name_snapshot, size_color_snapshot,
-              unit_price, quantity, line_total
-       FROM sale_items
-       WHERE sale_id = ?`
-    )
-    .all(id);
+  return res.json({ sale });
+});
 
-  return res.json({ sale: { ...sale, items } });
+router.get("/:id/print-html", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ message: "ID de venta inválido." });
+  }
+
+  const sale = getSaleWithItems(id);
+  if (!sale) {
+    return res.status(404).json({ message: "Venta no encontrada." });
+  }
+
+  const html = buildInvoiceHtml(sale, { autoPrint: true });
+  return res.json({ html });
+});
+
+router.post("/:id/send-email", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ message: "ID de venta inválido." });
+  }
+
+  const sale = getSaleWithItems(id);
+  if (!sale) {
+    return res.status(404).json({ message: "Venta no encontrada." });
+  }
+
+  if (!sale.customer_email || !isValidEmail(sale.customer_email)) {
+    return res.status(400).json({ message: "La venta no tiene un cliente con email valido." });
+  }
+
+  if (!isInvoiceEmailEnabled()) {
+    return res.status(400).json({
+      message: getInvoiceEmailConfigError() || "El envio por email no esta configurado en el servidor."
+    });
+  }
+
+  try {
+    await sendSaleInvoiceEmail(sale);
+    return res.json({ message: `Factura ${sale.invoice_number} enviada a ${sale.customer_email}.` });
+  } catch (error) {
+    console.error("No se pudo enviar factura por email:", error);
+    return res.status(500).json({ message: "No se pudo enviar la factura por email." });
+  }
 });
 
 router.post("/:id/arca/generate", async (req, res) => {
@@ -83,11 +156,16 @@ router.post("/:id/arca/generate", async (req, res) => {
 
   const sale = db
     .prepare(
-      `SELECT s.id, s.invoice_number, s.payment_method, s.total_amount,
+      `SELECT s.id, s.invoice_number, s.payment_method, s.total_amount, s.customer_id,
               s.arca_status, s.arca_comprobante_id, s.arca_emitted_at,
-              s.created_at, u.username AS seller
+              s.created_at, u.username AS seller,
+              c.first_name AS customer_first_name,
+              c.last_name AS customer_last_name,
+              c.cuit AS customer_cuit,
+              c.email AS customer_email
        FROM sales s
        JOIN users u ON u.id = s.seller_user_id
+       LEFT JOIN clients c ON c.id = s.customer_id
        WHERE s.id = ?`
     )
     .get(id);
@@ -138,11 +216,16 @@ router.post("/:id/arca/generate", async (req, res) => {
 
     const updatedSale = db
       .prepare(
-        `SELECT s.id, s.invoice_number, s.payment_method, s.total_amount,
+        `SELECT s.id, s.invoice_number, s.payment_method, s.total_amount, s.customer_id,
                 s.arca_status, s.arca_comprobante_id, s.arca_emitted_at, s.arca_last_error,
-                s.created_at, u.username AS seller
+                s.created_at, u.username AS seller,
+                c.first_name AS customer_first_name,
+                c.last_name AS customer_last_name,
+                c.cuit AS customer_cuit,
+                c.email AS customer_email
          FROM sales s
          JOIN users u ON u.id = s.seller_user_id
+         LEFT JOIN clients c ON c.id = s.customer_id
          WHERE s.id = ?`
       )
       .get(id);
@@ -177,8 +260,8 @@ router.post("/:id/arca/generate", async (req, res) => {
   }
 });
 
-router.post("/", (req, res) => {
-  const { items, paymentMethod } = req.body || {};
+router.post("/", async (req, res) => {
+  const { items, paymentMethod, customerId } = req.body || {};
 
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ message: "La venta debe incluir al menos un producto." });
@@ -247,6 +330,7 @@ router.post("/", (req, res) => {
       }
 
       let cashSessionId = null;
+      let normalizedCustomerId = null;
       if (normalizedPaymentMethod === "cash") {
         const openSession = db
           .prepare(
@@ -267,12 +351,30 @@ router.post("/", (req, res) => {
         cashSessionId = openSession.id;
       }
 
+      if (customerId !== undefined && customerId !== null && customerId !== "") {
+        const parsedCustomerId = Number(customerId);
+        if (!Number.isInteger(parsedCustomerId) || parsedCustomerId <= 0) {
+          const error = new Error("Cliente inválido.");
+          error.status = 400;
+          throw error;
+        }
+
+        const customer = db.prepare("SELECT id FROM clients WHERE id = ?").get(parsedCustomerId);
+        if (!customer) {
+          const error = new Error("Cliente no encontrado.");
+          error.status = 404;
+          throw error;
+        }
+
+        normalizedCustomerId = parsedCustomerId;
+      }
+
       const insertSale = db
         .prepare(
-          `INSERT INTO sales (invoice_number, seller_user_id, cash_session_id, payment_method, total_amount)
-           VALUES (?, ?, ?, ?, ?)`
+          `INSERT INTO sales (invoice_number, seller_user_id, customer_id, cash_session_id, payment_method, total_amount)
+           VALUES (?, ?, ?, ?, ?, ?)`
         )
-        .run(null, req.session.user.id, cashSessionId, normalizedPaymentMethod, saleTotal);
+        .run(null, req.session.user.id, normalizedCustomerId, cashSessionId, normalizedPaymentMethod, saleTotal);
 
       const saleId = Number(insertSale.lastInsertRowid);
       const invoiceNumber = buildInvoiceNumber(saleId);
@@ -307,12 +409,17 @@ router.post("/", (req, res) => {
 
       const sale = db
         .prepare(
-          `SELECT s.id, s.invoice_number, s.payment_method, s.total_amount,
+          `SELECT s.id, s.invoice_number, s.payment_method, s.total_amount, s.customer_id,
                   s.arca_status, s.arca_comprobante_id, s.arca_emitted_at, s.arca_last_error,
                   s.created_at,
-                  u.username AS seller
+                  u.username AS seller,
+                  c.first_name AS customer_first_name,
+                  c.last_name AS customer_last_name,
+                  c.cuit AS customer_cuit,
+                  c.email AS customer_email
            FROM sales s
            JOIN users u ON u.id = s.seller_user_id
+           LEFT JOIN clients c ON c.id = s.customer_id
            WHERE s.id = ?`
         )
         .get(saleId);
@@ -324,7 +431,23 @@ router.post("/", (req, res) => {
     });
 
     const sale = createSaleTx();
-    return res.status(201).json({ sale });
+    let emailStatus = "not_applicable";
+
+    if (sale.customer_email && isValidEmail(sale.customer_email)) {
+      if (isInvoiceEmailEnabled()) {
+        try {
+          await sendSaleInvoiceEmail(sale);
+          emailStatus = "sent";
+        } catch (emailError) {
+          emailStatus = "failed";
+          console.error("No se pudo enviar factura por email:", emailError);
+        }
+      } else {
+        emailStatus = "skipped_not_configured";
+      }
+    }
+
+    return res.status(201).json({ sale, emailStatus });
   } catch (error) {
     return res.status(error.status || 500).json({ message: error.message || "No se pudo registrar la venta." });
   }
