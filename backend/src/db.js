@@ -59,6 +59,12 @@ function runMigrations() {
     "ALTER TABLE products ADD COLUMN image_url TEXT NOT NULL DEFAULT ''"
   );
   addColumnIfMissing(
+    "products",
+    "product_code",
+    "ALTER TABLE products ADD COLUMN product_code TEXT NOT NULL DEFAULT ''"
+  );
+  db.exec("UPDATE products SET product_code = barcode WHERE product_code = '' OR product_code IS NULL");
+  addColumnIfMissing(
     "sales",
     "arca_status",
     "ALTER TABLE sales ADD COLUMN arca_status TEXT NOT NULL DEFAULT 'not_generated' CHECK (arca_status IN ('not_generated', 'pending', 'issued', 'error'))"

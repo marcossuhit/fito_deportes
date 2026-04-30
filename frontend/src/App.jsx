@@ -6,10 +6,10 @@ const emptyForm = {
   name: "",
   brand: "",
   family: "",
+  color: "",
   price: "",
-  stock: "",
-  low_stock_threshold: "2",
-  image_url: ""
+  image_url: "",
+  variants: [{ size: "", stock: "", low_stock_threshold: "2" }]
 };
 const emptyClientForm = {
   firstName: "",
@@ -74,6 +74,8 @@ const productFamilyOptions = [
   "Voley",
   "Zapatillas trail running"
 ].sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }));
+const defaultSizeOptions = ["XS", "S", "M", "L", "XL", "XXL"];
+const shoesSizeOptions = Array.from({ length: 45 - 21 + 1 }, (_, index) => String(21 + index));
 
 function money(value) {
   return `$${Number(value || 0).toFixed(2)}`;
@@ -94,6 +96,34 @@ function paymentMethodTone(value) {
   if (key === "card") return "bg-blue-100 text-blue-800";
   if (key === "transfer") return "bg-indigo-100 text-indigo-800";
   return "bg-slate-200 text-slate-800";
+}
+
+function splitSizeColor(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return { size: "", color: "" };
+  }
+  if (raw.includes("/")) {
+    const [sizePart, colorPart] = raw.split("/").map((item) => item.trim());
+    return { size: sizePart || "", color: colorPart || "" };
+  }
+  return { size: raw, color: "" };
+}
+
+function normalizeBarcodePart(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function sizeOptionsByFamily(family) {
+  const normalizedFamily = String(family || "").trim().toLowerCase();
+  if (normalizedFamily === "zapatillas trail running") {
+    return shoesSizeOptions;
+  }
+  return defaultSizeOptions;
 }
 
 function arcaStatusLabel(value) {
@@ -193,12 +223,15 @@ function App() {
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [editingGroupCode, setEditingGroupCode] = useState(null);
   const [form, setForm] = useState(emptyForm);
 
   const [productFilters, setProductFilters] = useState({
     name: "",
     brand: "",
-    family: ""
+    family: "",
+    size: "",
+    color: ""
   });
   const [stockAdjustMessage, setStockAdjustMessage] = useState("");
   const [stockAdjustError, setStockAdjustError] = useState("");
@@ -256,6 +289,7 @@ function App() {
   });
   const invoiceDetailRef = useRef(null);
   const invoiceDetailFlashTimerRef = useRef(null);
+  const stockFormRef = useRef(null);
 
   const cartTotal = useMemo(
     () => cart.reduce((sum, item) => sum + Number(item.price) * item.quantity, 0),
@@ -269,15 +303,40 @@ function App() {
     const queryName = productFilters.name.trim().toLowerCase();
     const queryBrand = productFilters.brand;
     const queryFamily = productFilters.family;
+    const querySize = productFilters.size.trim().toLowerCase();
+    const queryColor = productFilters.color.trim().toLowerCase();
 
     return products.filter((product) => {
       const name = String(product.name || "").toLowerCase();
       const matchesName = !queryName || name.includes(queryName);
       const matchesBrand = !queryBrand || String(product.brand || "") === queryBrand;
       const matchesFamily = !queryFamily || String(product.family || "") === queryFamily;
-      return matchesName && matchesBrand && matchesFamily;
+      const sizeColor = splitSizeColor(product.size_color);
+      const productSize = String(sizeColor.size || "").toLowerCase();
+      const productColor = String(sizeColor.color || "").toLowerCase();
+      const matchesSize = !querySize || productSize.includes(querySize);
+      const matchesColor = !queryColor || productColor.includes(queryColor);
+      return matchesName && matchesBrand && matchesFamily && matchesSize && matchesColor;
     });
   }, [products, productFilters]);
+  const groupedStockProducts = useMemo(() => {
+    const map = new Map();
+    for (const product of filteredStockProducts) {
+      const code = String(product.product_code || product.barcode || "");
+      if (!map.has(code)) {
+        map.set(code, {
+          product_code: code,
+          items: []
+        });
+      }
+      map.get(code).items.push(product);
+    }
+    return Array.from(map.values()).sort((a, b) => {
+      const left = String(a.items[0]?.name || "");
+      const right = String(b.items[0]?.name || "");
+      return left.localeCompare(right);
+    });
+  }, [filteredStockProducts]);
   const saleSuggestions = useMemo(() => {
     const query = saleBarcode.trim().toLowerCase();
     if (!query) {
@@ -538,25 +597,43 @@ function App() {
 
   function openCreateForm() {
     setEditingId(null);
+    setEditingGroupCode(null);
     setForm(emptyForm);
     setIsFormOpen(true);
     setError("");
   }
 
-  function openEditForm(product) {
-    setEditingId(product.id);
+  function openEditForm(group) {
+    const first = group.items[0];
+    const sizeColor = splitSizeColor(first.size_color);
+    setEditingId(first.id);
+    setEditingGroupCode(group.product_code);
     setForm({
-      barcode: product.barcode,
-      name: product.name,
-      brand: product.brand || "",
-      family: product.family || "",
-      price: String(product.price),
-      stock: String(product.stock),
-      low_stock_threshold: String(product.low_stock_threshold ?? 2),
-      image_url: String(product.image_url || "")
+      barcode: group.product_code,
+      name: first.name,
+      brand: first.brand || "",
+      family: first.family || "",
+      color: sizeColor.color,
+      price: String(first.price),
+      image_url: String(first.image_url || ""),
+      variants: group.items.map((item) => ({
+        id: item.id,
+        barcode: item.barcode,
+        size: splitSizeColor(item.size_color).size,
+        stock: String(item.stock),
+        low_stock_threshold: String(item.low_stock_threshold ?? 2)
+      }))
     });
     setIsFormOpen(true);
     setError("");
+    requestAnimationFrame(() => {
+      stockFormRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+      const firstInput = stockFormRef.current?.querySelector("input, select, textarea");
+      firstInput?.focus();
+    });
   }
 
   async function handleProductImageChange(event) {
@@ -590,31 +667,121 @@ function App() {
     e.preventDefault();
     setError("");
 
-    const payload = {
-      barcode: form.barcode.trim(),
-      name: form.name.trim(),
-      brand: form.brand.trim(),
-      family: form.family.trim(),
-      price: Number(form.price),
-      stock: Number(form.stock),
-      low_stock_threshold: Number(form.low_stock_threshold),
-      image_url: String(form.image_url || "").trim()
-    };
+    const baseBarcode = form.barcode.trim();
+    const normalizedVariants = (form.variants || [])
+      .map((variant) => ({
+        size: String(variant.size || "").trim(),
+        stock: Number(variant.stock),
+        low_stock_threshold: Number(variant.low_stock_threshold)
+      }))
+      .filter((variant) => variant.size || variant.stock || variant.low_stock_threshold);
+
+    if (!normalizedVariants.length) {
+      setError("Agregá al menos una variante con talle y cantidad.");
+      return;
+    }
 
     try {
-      if (editingId) {
-        await api.updateProduct(editingId, payload);
+      if (editingGroupCode) {
+        const existingGroupItems = products
+          .filter((item) => String(item.product_code || item.barcode) === String(editingGroupCode))
+          .sort((a, b) => a.id - b.id);
+
+        for (let i = 0; i < normalizedVariants.length; i += 1) {
+          const variant = normalizedVariants[i];
+          const sizeColor = [variant.size, form.color.trim()].filter(Boolean).join(" / ");
+          const existing = existingGroupItems[i];
+
+          if (existing) {
+            await api.updateProduct(existing.id, {
+              barcode: existing.barcode,
+              product_code: baseBarcode,
+              name: form.name.trim(),
+              brand: form.brand.trim(),
+              family: form.family.trim(),
+              size_color: sizeColor,
+              price: Number(form.price),
+              stock: Number(variant.stock),
+              low_stock_threshold: Number(variant.low_stock_threshold),
+              image_url: String(form.image_url || "").trim()
+            });
+          } else {
+            await api.createProduct({
+              barcode: `${baseBarcode}-VAR-${Date.now()}-${i + 1}`,
+              product_code: baseBarcode,
+              name: form.name.trim(),
+              brand: form.brand.trim(),
+              family: form.family.trim(),
+              size_color: sizeColor,
+              price: Number(form.price),
+              stock: Number(variant.stock),
+              low_stock_threshold: Number(variant.low_stock_threshold),
+              image_url: String(form.image_url || "").trim()
+            });
+          }
+        }
+
+        if (existingGroupItems.length > normalizedVariants.length) {
+          for (const extra of existingGroupItems.slice(normalizedVariants.length)) {
+            await api.deleteProduct(extra.id);
+          }
+        }
       } else {
-        await api.createProduct(payload);
+        for (let i = 0; i < normalizedVariants.length; i += 1) {
+          const variant = normalizedVariants[i];
+          const sizeColor = [variant.size, form.color.trim()].filter(Boolean).join(" / ");
+          const variantParts = [normalizeBarcodePart(variant.size)].filter(Boolean);
+          const generatedBarcode = variantParts.length ? `${baseBarcode}-${variantParts.join("-")}` : baseBarcode;
+          const payload = {
+            barcode: i === 0 ? generatedBarcode : `${generatedBarcode}-${i + 1}`,
+            product_code: baseBarcode,
+            name: form.name.trim(),
+            brand: form.brand.trim(),
+            family: form.family.trim(),
+            size_color: sizeColor,
+            price: Number(form.price),
+            stock: Number(variant.stock),
+            low_stock_threshold: Number(variant.low_stock_threshold),
+            image_url: String(form.image_url || "").trim()
+          };
+          await api.createProduct(payload);
+        }
       }
 
       setIsFormOpen(false);
       setForm(emptyForm);
       setEditingId(null);
+      setEditingGroupCode(null);
       await reloadProductsAndStats();
     } catch (err) {
       setError(err.message);
     }
+  }
+
+  function addVariantRow() {
+    setForm((prev) => ({
+      ...prev,
+      variants: [...(prev.variants || []), { size: "", stock: "", low_stock_threshold: "2" }]
+    }));
+  }
+
+  function removeVariantRow(index) {
+    setForm((prev) => {
+      const nextVariants = (prev.variants || []).filter((_, itemIndex) => itemIndex !== index);
+      return {
+        ...prev,
+        variants: nextVariants.length ? nextVariants : [{ size: "", stock: "", low_stock_threshold: "2" }]
+      };
+    });
+  }
+
+  function changeVariantRow(index, field, value) {
+    setForm((prev) => ({
+      ...prev,
+      variants: (prev.variants || []).map((variant, itemIndex) =>
+        itemIndex === index ? { ...variant, [field]: value } : variant
+      )
+    }));
   }
 
   async function removeProduct(id) {
@@ -970,10 +1137,11 @@ function App() {
     if (!isFormOpen) {
       return null;
     }
+    const sizeOptions = sizeOptionsByFamily(form.family);
 
     return (
-      <section className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-sm">
-        <h2 className="mb-4 text-2xl font-bold">{editingId ? "Editar Producto" : "Agregar Producto"}</h2>
+      <section ref={stockFormRef} className="rounded-2xl border-2 border-slate-300 bg-white p-4 shadow-sm">
+        <h2 className="mb-4 text-2xl font-bold">{editingGroupCode ? "Editar Producto" : "Agregar Producto"}</h2>
 
         <form onSubmit={saveProduct} className="grid gap-3 md:grid-cols-2">
           <input
@@ -1038,8 +1206,14 @@ function App() {
               <option key={family} value={family}>
                 {family}
               </option>
-            ))}
-          </select>
+              ))}
+            </select>
+          <input
+            className="rounded-xl border-2 border-slate-300 px-4 py-3"
+            placeholder="Color principal"
+            value={form.color}
+            onChange={(e) => setForm({ ...form, color: e.target.value })}
+          />
           <input
             type="number"
             step="0.01"
@@ -1049,28 +1223,66 @@ function App() {
             onChange={(e) => setForm({ ...form, price: e.target.value })}
             required
           />
-          <div className="space-y-1">
-            <input
-              type="number"
-              className="w-full rounded-xl border-2 border-slate-300 px-4 py-3"
-              placeholder="Cantidad"
-              value={form.stock}
-              onChange={(e) => setForm({ ...form, stock: e.target.value })}
-              required
-            />
-            <p className="px-1 text-sm text-transparent select-none">Alineación visual</p>
-          </div>
-          <div className="space-y-1">
-            <input
-              type="number"
-              className="w-full rounded-xl border-2 border-slate-300 px-4 py-3"
-              placeholder="Alerta mínima (ej: 2)"
-              value={form.low_stock_threshold}
-              onChange={(e) => setForm({ ...form, low_stock_threshold: e.target.value })}
-              required
-            />
-            <p className="px-1 text-sm text-slate-600">
-              Este valor indica el mínimo de unidades: si el stock actual es menor o igual, el producto queda en alerta.
+          <div className="md:col-span-2 space-y-2 rounded-xl border border-slate-300 bg-slate-50 p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-bold uppercase text-slate-700">Variantes (talle / cantidad / alerta)</p>
+              <button
+                type="button"
+                onClick={addVariantRow}
+                className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-bold text-white hover:bg-slate-900"
+              >
+                Agregar variante
+              </button>
+            </div>
+            {(form.variants || []).map((variant, index) => (
+              <div key={`variant-${index}`} className="grid gap-2 md:grid-cols-4">
+                <select
+                  className="rounded-xl border-2 border-slate-300 px-3 py-2"
+                  value={variant.size}
+                  onChange={(e) => changeVariantRow(index, "size", e.target.value)}
+                >
+                  <option value="">Seleccionar talle</option>
+                  {sizeOptions.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                  {variant.size && !sizeOptions.includes(variant.size) ? (
+                    <option value={variant.size}>{variant.size}</option>
+                  ) : null}
+                </select>
+                <input
+                  type="number"
+                  className="rounded-xl border-2 border-slate-300 px-3 py-2"
+                  placeholder="Cantidad"
+                  value={variant.stock}
+                  onChange={(e) => changeVariantRow(index, "stock", e.target.value)}
+                  required
+                />
+                <div className="rounded-xl border-2 border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-600">
+                  Color general: {form.color || "-"}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    className="w-full rounded-xl border-2 border-slate-300 px-3 py-2"
+                    placeholder="Alerta"
+                    value={variant.low_stock_threshold}
+                    onChange={(e) => changeVariantRow(index, "low_stock_threshold", e.target.value)}
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeVariantRow(index)}
+                    className="rounded-lg bg-red-100 px-3 py-2 text-sm font-bold text-red-700 hover:bg-red-200"
+                  >
+                    X
+                  </button>
+                </div>
+              </div>
+            ))}
+            <p className="text-xs text-slate-600">
+              El primer registro usa el código base; los demás generan código derivado para conservar unicidad.
             </p>
           </div>
 
@@ -1108,32 +1320,41 @@ function App() {
             </tr>
           </thead>
           <tbody>
-            {filteredStockProducts.map((product) => {
-              const lowStock = Number(product.stock) <= Number(product.low_stock_threshold ?? 2);
+            {groupedStockProducts.map((group) => {
+              const first = group.items[0];
+              const totalStock = group.items.reduce((sum, item) => sum + Number(item.stock || 0), 0);
+              const lowStock = group.items.some((item) => Number(item.stock) <= Number(item.low_stock_threshold ?? 2));
 
               return (
-                <tr key={product.id} className={`${lowStock ? "bg-red-50" : "bg-slate-50"} text-lg`}>
+                <tr key={group.product_code} className={`${lowStock ? "bg-red-50" : "bg-slate-50"} text-lg`}>
                   <td className="rounded-l-xl px-4 py-3">
                     <div className="flex items-start gap-3">
-                      {product.image_url ? (
-                        <img src={product.image_url} alt={product.name} className="h-14 w-14 rounded-lg border border-slate-200 object-cover" />
+                      {first.image_url ? (
+                        <img src={first.image_url} alt={first.name} className="h-14 w-14 rounded-lg border border-slate-200 object-cover" />
                       ) : (
                         <div className="flex h-14 w-14 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-100 text-xs font-bold text-slate-500">
                           SIN IMG
                         </div>
                       )}
                       <div>
-                      <p className="text-xl font-extrabold text-slate-900">{product.name}</p>
-                      <p className="text-sm font-semibold text-slate-700">Marca: {product.brand || "-"}</p>
-                      <p className="text-sm font-semibold text-slate-700">Familia: {product.family || "-"}</p>
-                      <p className="text-sm text-slate-600">Código: {product.barcode}</p>
+                      <p className="text-xl font-extrabold text-slate-900">{first.name}</p>
+                      <p className="text-sm font-semibold text-slate-700">Marca: {first.brand || "-"}</p>
+                      <p className="text-sm font-semibold text-slate-700">Familia: {first.family || "-"}</p>
+                      <p className="text-sm text-slate-600">Código: {group.product_code}</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {group.items.map((variant) => (
+                          <span key={variant.id} className="inline-flex rounded-full border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                            Talle {splitSizeColor(variant.size_color).size || "-"} · Stock {variant.stock} · Alerta {variant.low_stock_threshold ?? 2}
+                          </span>
+                        ))}
+                      </div>
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3">{money(product.price)}</td>
+                  <td className="px-4 py-3">{money(first.price)}</td>
                   <td className={`px-4 py-3 font-bold ${lowStock ? "text-red-700" : "text-slate-900"}`}>
                     <div className="flex items-center gap-2">
-                      <span>{product.stock}</span>
+                      <span>{totalStock}</span>
                       {lowStock && (
                         <span className="inline-flex rounded-full bg-red-200 px-2 py-1 text-xs font-bold uppercase text-red-800">
                           En alerta
@@ -1141,30 +1362,33 @@ function App() {
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3">{product.low_stock_threshold ?? 2}</td>
+                  <td className="px-4 py-3">Por variante</td>
                   <td className="rounded-r-xl px-4 py-3">
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={() => openEditForm(product)}
+                        onClick={() => openEditForm(group)}
                         className="rounded-lg bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700"
                       >
                         Editar
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => removeProduct(product.id)}
-                        className="rounded-lg bg-red-600 px-4 py-2 font-bold text-white hover:bg-red-700"
-                      >
-                        Eliminar
-                      </button>
+                      {group.items.map((variant) => (
+                        <button
+                          key={`del-${variant.id}`}
+                          type="button"
+                          onClick={() => removeProduct(variant.id)}
+                          className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700"
+                        >
+                          Elim. {splitSizeColor(variant.size_color).size || variant.id}
+                        </button>
+                      ))}
                     </div>
                   </td>
                 </tr>
               );
             })}
 
-            {!filteredStockProducts.length && (
+            {!groupedStockProducts.length && (
               <tr>
                 <td className="px-4 py-6 text-center text-lg text-slate-600" colSpan={5}>
                   No hay productos que coincidan con los filtros.
@@ -1361,7 +1585,7 @@ function App() {
 
         <section className="rounded-2xl border border-slate-300 bg-slate-100 p-4 shadow-sm">
           <h3 className="mb-3 text-xl font-bold text-slate-900">Filtros de productos</h3>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-5">
             <input
               value={productFilters.name}
               onChange={(e) => setProductFilters((prev) => ({ ...prev, name: e.target.value }))}
@@ -1392,6 +1616,18 @@ function App() {
                 </option>
               ))}
             </select>
+            <input
+              value={productFilters.size}
+              onChange={(e) => setProductFilters((prev) => ({ ...prev, size: e.target.value }))}
+              placeholder="Filtrar por talle"
+              className="rounded-xl border-2 border-slate-300 px-4 py-3"
+            />
+            <input
+              value={productFilters.color}
+              onChange={(e) => setProductFilters((prev) => ({ ...prev, color: e.target.value }))}
+              placeholder="Filtrar por color"
+              className="rounded-xl border-2 border-slate-300 px-4 py-3"
+            />
           </div>
         </section>
 
@@ -1417,7 +1653,7 @@ function App() {
         />
 
         <section className="rounded-2xl bg-white p-4 shadow-sm">
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-5">
             <input
               value={productFilters.name}
               onChange={(e) => setProductFilters((prev) => ({ ...prev, name: e.target.value }))}
@@ -1448,6 +1684,18 @@ function App() {
                 </option>
               ))}
             </select>
+            <input
+              value={productFilters.size}
+              onChange={(e) => setProductFilters((prev) => ({ ...prev, size: e.target.value }))}
+              placeholder="Filtrar por talle"
+              className="rounded-xl border-2 border-slate-300 px-4 py-3 text-lg"
+            />
+            <input
+              value={productFilters.color}
+              onChange={(e) => setProductFilters((prev) => ({ ...prev, color: e.target.value }))}
+              placeholder="Filtrar por color"
+              className="rounded-xl border-2 border-slate-300 px-4 py-3 text-lg"
+            />
           </div>
 
           {stockAdjustError && <p className="mt-3 rounded-lg bg-red-100 p-3 text-red-700">{stockAdjustError}</p>}
