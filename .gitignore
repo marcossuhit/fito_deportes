@@ -1,8 +1,11 @@
 backend/node_modules
 frontend/node_modules
+arca-gateway/node_modules
 backend/data/*.db
 backend/.env
+arca-gateway/.env
 frontend/dist
+Certificados/
 
 backend/data/*.db-wal
 backend/data/*.db-shm

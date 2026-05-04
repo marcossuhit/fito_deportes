@@ -239,6 +239,7 @@ function App() {
 
   const [saleBarcode, setSaleBarcode] = useState("");
   const [cart, setCart] = useState([]);
+  const [cartQuantityDrafts, setCartQuantityDrafts] = useState({});
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [saleMessage, setSaleMessage] = useState("");
   const [saleError, setSaleError] = useState("");
@@ -308,6 +309,7 @@ function App() {
   const salesBarcodeScannerRef = useRef(null);
   const salesScanLockRef = useRef(false);
   const salesScanToastTimerRef = useRef(null);
+  const SCAN_COOLDOWN_MS = 2000;
 
   const cartTotal = useMemo(
     () => cart.reduce((sum, item) => sum + Number(item.price) * item.quantity, 0),
@@ -971,29 +973,76 @@ function App() {
     setSaleError("");
   }
 
-  function changeCartQuantity(productId, value) {
-    const nextQty = Number(value);
+  function changeCartQuantityDraft(productId, value) {
+    if (!/^\d*$/.test(String(value))) {
+      return;
+    }
+    setCartQuantityDrafts((prev) => ({
+      ...prev,
+      [String(productId)]: String(value)
+    }));
+  }
 
-    if (!Number.isInteger(nextQty) || nextQty <= 0) {
+  function commitCartQuantity(productId) {
+    const key = String(productId);
+    const raw = cartQuantityDrafts[key];
+    if (raw === undefined) {
       return;
     }
 
+    const nextQty = Number(raw);
+    if (!Number.isInteger(nextQty) || nextQty <= 0) {
+      setCartQuantityDrafts((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      return;
+    }
+
+    const item = cart.find((entry) => entry.productId === productId);
+    if (!item) {
+      return;
+    }
+
+    if (nextQty > item.maxStock) {
+      setSaleError(`Stock insuficiente para ${item.name}. Disponible: ${item.maxStock}.`);
+      setCartQuantityDrafts((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      return;
+    }
+
+    setSaleError("");
     setCart((prev) =>
-      prev.map((item) => {
-        if (item.productId !== productId) {
-          return item;
+      prev.map((entry) => {
+        if (entry.productId !== productId) {
+          return entry;
         }
 
         return {
-          ...item,
-          quantity: Math.min(nextQty, item.maxStock)
+          ...entry,
+          quantity: nextQty
         };
       })
     );
+
+    setCartQuantityDrafts((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   }
 
   function removeCartItem(productId) {
     setCart((prev) => prev.filter((item) => item.productId !== productId));
+    setCartQuantityDrafts((prev) => {
+      const next = { ...prev };
+      delete next[String(productId)];
+      return next;
+    });
   }
 
   async function checkoutSale() {
@@ -1022,6 +1071,7 @@ function App() {
 
       setSaleMessage(`Factura ${sale.invoice_number} creada por ${money(sale.total_amount)}.`);
       setCart([]);
+      setCartQuantityDrafts({});
       setSelectedCustomerId("");
       await reloadProductsAndStats();
     } catch (err) {
@@ -1088,6 +1138,7 @@ function App() {
       }
 
       setCart([]);
+      setCartQuantityDrafts({});
       setSelectedCustomerId("");
     } catch (err) {
       setSaleError(err.message);
@@ -1331,6 +1382,7 @@ function App() {
           if (!value) {
             return;
           }
+          playScannerBeep();
           setForm((prev) => ({ ...prev, barcode: value }));
           stopBarcodeScanner();
         },
@@ -1430,12 +1482,18 @@ function App() {
           salesScanLockRef.current = true;
 
           const value = String(decodedText || "").trim();
+          if (!value) {
+            salesScanLockRef.current = false;
+            return;
+          }
+
+          // Feedback inmediato ante lectura válida, incluso si luego no hay match único.
+          playScannerBeep();
           setSaleBarcode(value);
 
           const { product } = findSaleProduct(value);
           if (product) {
             addProductToCart(product);
-            playSalesScanBeep();
             showSalesScanToast(`${product.name} agregado al carrito`);
           } else {
             setSaleError("Código leído, pero no se encontró un producto único para ese valor.");
@@ -1443,7 +1501,7 @@ function App() {
 
           setTimeout(() => {
             salesScanLockRef.current = false;
-          }, 500);
+          }, SCAN_COOLDOWN_MS);
         },
         () => {}
       );
@@ -1491,25 +1549,37 @@ function App() {
     }, 80);
   }
 
-  function playSalesScanBeep() {
+  function playScannerBeep() {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (!AudioCtx) {
         return;
       }
       const ctx = new AudioCtx();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.value = 1100;
-      gain.gain.value = 0.07;
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.09);
-      osc.onended = () => {
+      const now = ctx.currentTime;
+      const master = ctx.createGain();
+      master.gain.setValueAtTime(0.0001, now);
+      master.gain.exponentialRampToValueAtTime(0.22, now + 0.01);
+      master.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+      master.connect(ctx.destination);
+
+      const toneA = ctx.createOscillator();
+      toneA.type = "square";
+      toneA.frequency.setValueAtTime(1850, now);
+      toneA.connect(master);
+      toneA.start(now);
+      toneA.stop(now + 0.11);
+
+      const toneB = ctx.createOscillator();
+      toneB.type = "square";
+      toneB.frequency.setValueAtTime(1400, now + 0.11);
+      toneB.connect(master);
+      toneB.start(now + 0.11);
+      toneB.stop(now + 0.24);
+
+      setTimeout(() => {
         ctx.close().catch(() => {});
-      };
+      }, 320);
     } catch {}
   }
 
@@ -2293,7 +2363,7 @@ function App() {
               {salesScannerError ? <p className="mt-2 rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700">{salesScannerError}</p> : null}
 
               {saleBarcode.trim() && (
-                <div className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-xl border border-slate-200 bg-white shadow-lg">
+                <div className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-xl border-2 border-amber-300 bg-amber-50 shadow-lg ring-2 ring-amber-200/70">
                   {saleSuggestions.map((product) => (
                     <button
                       key={product.id}
@@ -2301,17 +2371,17 @@ function App() {
                       onClick={() => {
                         addProductToCart(product);
                       }}
-                      className="block w-full border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50 last:border-b-0"
+                      className="block w-full border-b border-amber-200 px-4 py-3 text-left hover:bg-amber-100 last:border-b-0"
                     >
-                      <p className="font-bold text-slate-900">{product.name}</p>
-                      <p className="text-sm text-slate-600">
+                      <p className="font-extrabold text-slate-900">{product.name}</p>
+                      <p className="text-sm font-semibold text-slate-700">
                         Código: {product.barcode} | Stock: {product.stock}
                       </p>
                     </button>
                   ))}
 
                   {!saleSuggestions.length && (
-                    <p className="px-4 py-3 text-sm text-slate-600">
+                    <p className="px-4 py-3 text-sm font-semibold text-amber-900">
                       No hay productos que coincidan.
                     </p>
                   )}
@@ -2371,8 +2441,15 @@ function App() {
                   type="number"
                   min="1"
                   max={item.maxStock}
-                  value={item.quantity}
-                  onChange={(e) => changeCartQuantity(item.productId, e.target.value)}
+                  value={cartQuantityDrafts[String(item.productId)] ?? String(item.quantity)}
+                  onChange={(e) => changeCartQuantityDraft(item.productId, e.target.value)}
+                  onBlur={() => commitCartQuantity(item.productId)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitCartQuantity(item.productId);
+                    }
+                  }}
                   className="rounded-lg border-2 border-slate-300 px-2 py-1"
                 />
                 <div className="flex items-center justify-end gap-2">
@@ -2401,7 +2478,7 @@ function App() {
                 onClick={checkoutSale}
                 className="rounded-xl bg-emerald-600 px-5 py-3 text-lg font-bold text-white hover:bg-emerald-700"
               >
-                Cobrar y Facturar
+                Cobrar
               </button>
               <button
                 type="button"
