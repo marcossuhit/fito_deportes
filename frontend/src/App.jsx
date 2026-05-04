@@ -285,6 +285,8 @@ function App() {
   const [salesScannerCameras, setSalesScannerCameras] = useState([]);
   const [selectedSalesCameraId, setSelectedSalesCameraId] = useState("");
   const [salesScanToast, setSalesScanToast] = useState("");
+  const [salesActionLoading, setSalesActionLoading] = useState(false);
+  const [salesActionLabel, setSalesActionLabel] = useState("");
   const [usdQuote, setUsdQuote] = useState({
     sell: null,
     buy: null,
@@ -518,6 +520,12 @@ function App() {
     if (activeView === "ventas") {
       return;
     }
+    setSaleBarcode("");
+    setCart([]);
+    setSelectedCustomerId("");
+    setSaleMessage("");
+    setSaleError("");
+    setSalesScanToast("");
     if (salesScannerActive) {
       stopSalesBarcodeScanner();
     }
@@ -998,6 +1006,8 @@ function App() {
     }
 
     try {
+      setSalesActionLabel("Procesando cobro y generando factura...");
+      setSalesActionLoading(true);
       const payload = {
         paymentMethod,
         customerId: selectedCustomerId ? Number(selectedCustomerId) : null,
@@ -1016,6 +1026,9 @@ function App() {
       await reloadProductsAndStats();
     } catch (err) {
       setSaleError(err.message);
+    } finally {
+      setSalesActionLoading(false);
+      setSalesActionLabel("");
     }
   }
 
@@ -1029,6 +1042,8 @@ function App() {
     }
 
     try {
+      setSalesActionLabel("Generando presupuesto...");
+      setSalesActionLoading(true);
       const payload = {
         paymentMethod,
         customerId: selectedCustomerId ? Number(selectedCustomerId) : null,
@@ -1042,6 +1057,9 @@ function App() {
       const quote = data.quote;
       const html = String(data?.html || "");
       const hasSelectedCustomer = Boolean(selectedCustomerId);
+      if (hasSelectedCustomer) {
+        setSalesActionLabel("Enviando presupuesto por email...");
+      }
 
       const openQuotePrintWindow = () => {
         const printWindow = window.open("", "_blank", "width=980,height=900");
@@ -1073,6 +1091,9 @@ function App() {
       setSelectedCustomerId("");
     } catch (err) {
       setSaleError(err.message);
+    } finally {
+      setSalesActionLoading(false);
+      setSalesActionLabel("");
     }
   }
 
@@ -3412,6 +3433,19 @@ function App() {
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-100 to-slate-200 p-4 sm:p-6">
+      {salesActionLoading ? (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-[1px]">
+          <div className="flex w-[min(92vw,420px)] flex-col items-center gap-4 rounded-2xl border border-white/30 bg-white px-6 py-7 text-center shadow-2xl">
+            <div className="relative h-20 w-20">
+              <div className="absolute inset-0 rounded-full border-4 border-slate-200" />
+              <div className="absolute inset-0 animate-spin rounded-full border-4 border-transparent border-t-emerald-500 border-r-emerald-400" />
+              <div className="absolute inset-[22px] animate-pulse rounded-full bg-emerald-500/80" />
+            </div>
+            <p className="text-base font-extrabold text-slate-900">{salesActionLabel || "Procesando..."}</p>
+            <p className="text-sm text-slate-600">Esperá unos segundos, estamos completando la operación.</p>
+          </div>
+        </div>
+      ) : null}
       <div className="mx-auto max-w-7xl space-y-5">
         <header className="rounded-2xl border border-[#D4842B] bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
