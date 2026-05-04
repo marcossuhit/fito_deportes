@@ -31,6 +31,8 @@ function normalizeItem(item) {
 }
 
 function buildInvoiceHtml(sale, options = {}) {
+  const documentType = String(options.documentType || "invoice").toLowerCase() === "quote" ? "quote" : "invoice";
+  const isQuote = documentType === "quote";
   const items = Array.isArray(sale?.items) ? sale.items.map(normalizeItem) : [];
   const total = Number(sale?.total_amount || 0);
   const saleDate = sale?.created_at ? new Date(sale.created_at).toLocaleString("es-AR") : "-";
@@ -39,6 +41,12 @@ function buildInvoiceHtml(sale, options = {}) {
     `${sale?.customer_first_name || ""} ${sale?.customer_last_name || ""}`.trim() || "Consumidor Final";
   const customerCuit = String(sale?.customer_cuit || "-").trim() || "-";
   const autoPrint = Boolean(options.autoPrint);
+  const docLabel = isQuote ? "PRESUPUESTO" : "FACTURA";
+  const docNumberLabel = isQuote ? "Presupuesto N°" : "N°";
+  const htmlTitle = `${docLabel} ${escapeHtml(sale?.invoice_number || "-")}`;
+  const footerLegend = isQuote
+    ? "Este documento es un presupuesto y no es valido como factura ni comprobante fiscal."
+    : "Comprobante emitido por sistema interno Fito Deportes.";
 
   const rows = items
     .map(
@@ -58,7 +66,7 @@ function buildInvoiceHtml(sale, options = {}) {
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>Factura ${escapeHtml(sale?.invoice_number || "-")}</title>
+  <title>${htmlTitle}</title>
   <style>
     @page { size: A4; margin: 14mm; }
     * { box-sizing: border-box; }
@@ -98,9 +106,9 @@ function buildInvoiceHtml(sale, options = {}) {
         <p class="sub"><strong>Condicion frente al IVA:</strong> Responsable Inscripto</p>
       </div>
       <div class="doc">
-        <div class="type">FACTURA</div>
+        <div class="type">${docLabel}</div>
         <div class="letter">B</div>
-        <div class="sub"><strong>N°:</strong> ${escapeHtml(sale?.invoice_number || "-")}</div>
+        <div class="sub"><strong>${docNumberLabel}:</strong> ${escapeHtml(sale?.invoice_number || "-")}</div>
         <div class="sub"><strong>Fecha:</strong> ${escapeHtml(saleDate)}</div>
       </div>
     </section>
@@ -144,7 +152,7 @@ function buildInvoiceHtml(sale, options = {}) {
     </section>
 
     <p class="footer">
-      Comprobante emitido por sistema interno Fito Deportes. Fecha de impresion: ${escapeHtml(issueDate)}.
+      ${footerLegend} Fecha de impresion: ${escapeHtml(issueDate)}.
     </p>
   </main>
   ${

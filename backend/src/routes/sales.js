@@ -5,7 +5,8 @@ const {
   getInvoiceEmailConfigError,
   isInvoiceEmailEnabled,
   isValidEmail,
-  sendSaleInvoiceEmail
+  sendSaleInvoiceEmail,
+  sendSaleQuoteEmail
 } = require("../services/invoiceEmail");
 const { buildInvoiceHtml } = require("../services/invoiceTemplate");
 
@@ -21,6 +22,17 @@ function buildInvoiceNumber(saleId) {
   const mm = String(now.getMonth() + 1).padStart(2, "0");
   const dd = String(now.getDate()).padStart(2, "0");
   return `FAC-${yyyy}${mm}${dd}-${String(saleId).padStart(6, "0")}`;
+}
+
+function buildQuoteNumber() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const hh = String(now.getHours()).padStart(2, "0");
+  const min = String(now.getMinutes()).padStart(2, "0");
+  const sec = String(now.getSeconds()).padStart(2, "0");
+  return `PRE-${yyyy}${mm}${dd}-${hh}${min}${sec}`;
 }
 
 function getSaleWithItems(id) {
@@ -84,6 +96,142 @@ router.get("/", (_req, res) => {
     .all();
 
   return res.json({ sales });
+});
+
+router.post("/quote", async (req, res) => {
+  const { items, paymentMethod, customerId } = req.body || {};
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ message: "El presupuesto debe incluir al menos un producto." });
+  }
+
+  const normalizedPaymentMethod = String(paymentMethod || "cash").trim().toLowerCase();
+  const allowedPaymentMethods = new Set(["cash", "card", "transfer", "other"]);
+  if (!allowedPaymentMethods.has(normalizedPaymentMethod)) {
+    return res.status(400).json({ message: "Medio de pago inválido." });
+  }
+
+  try {
+    const normalizedItems = items.map((rawItem) => ({
+      productId: Number(rawItem.productId),
+      quantity: Number(rawItem.quantity)
+    }));
+
+    const detailedItems = [];
+    let total = 0;
+
+    for (const item of normalizedItems) {
+      if (!Number.isInteger(item.productId) || item.productId <= 0) {
+        const error = new Error("Producto inválido en el presupuesto.");
+        error.status = 400;
+        throw error;
+      }
+
+      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        const error = new Error("Cantidad inválida en el presupuesto.");
+        error.status = 400;
+        throw error;
+      }
+
+      const product = db
+        .prepare(
+          `SELECT id, name, size_color, price, stock
+           FROM products
+           WHERE id = ?`
+        )
+        .get(item.productId);
+
+      if (!product) {
+        const error = new Error("Uno de los productos no existe.");
+        error.status = 404;
+        throw error;
+      }
+
+      if (product.stock < item.quantity) {
+        const error = new Error(`Stock insuficiente para ${product.name}.`);
+        error.status = 400;
+        throw error;
+      }
+
+      const lineTotal = toMoney(Number(product.price) * item.quantity);
+      total = toMoney(total + lineTotal);
+
+      detailedItems.push({
+        productId: product.id,
+        productName: product.name,
+        sizeColor: product.size_color,
+        unitPrice: Number(product.price),
+        quantity: item.quantity,
+        lineTotal
+      });
+    }
+
+    let customer = null;
+    if (customerId !== undefined && customerId !== null && customerId !== "") {
+      const parsedCustomerId = Number(customerId);
+      if (!Number.isInteger(parsedCustomerId) || parsedCustomerId <= 0) {
+        const error = new Error("Cliente inválido.");
+        error.status = 400;
+        throw error;
+      }
+
+      customer = db
+        .prepare(
+          `SELECT id, first_name, last_name, cuit, email
+           FROM clients
+           WHERE id = ?`
+        )
+        .get(parsedCustomerId);
+      if (!customer) {
+        const error = new Error("Cliente no encontrado.");
+        error.status = 404;
+        throw error;
+      }
+    }
+
+    const quote = {
+      id: null,
+      invoice_number: buildQuoteNumber(),
+      payment_method: normalizedPaymentMethod,
+      total_amount: total,
+      customer_id: customer?.id || null,
+      created_at: new Date().toISOString(),
+      seller: req.session.user.username,
+      customer_first_name: customer?.first_name || null,
+      customer_last_name: customer?.last_name || null,
+      customer_cuit: customer?.cuit || null,
+      customer_email: customer?.email || null,
+      items: detailedItems
+    };
+
+    const html = buildInvoiceHtml(quote, { autoPrint: true, documentType: "quote" });
+
+    let emailStatus = "not_applicable";
+    let emailMessage = "";
+    if (quote.customer_email) {
+      if (!isValidEmail(quote.customer_email)) {
+        return res.status(400).json({ message: "El cliente seleccionado no tiene un email valido." });
+      }
+      if (!isInvoiceEmailEnabled()) {
+        return res.status(400).json({
+          message: getInvoiceEmailConfigError() || "El envio por email no esta configurado en el servidor."
+        });
+      }
+      try {
+        await sendSaleQuoteEmail(quote);
+        emailStatus = "sent";
+        emailMessage = `Presupuesto ${quote.invoice_number} enviado a ${quote.customer_email}.`;
+      } catch (error) {
+        console.error("No se pudo enviar presupuesto por email:", error);
+        emailStatus = "failed";
+        emailMessage = "No se pudo enviar el presupuesto por email.";
+      }
+    }
+
+    return res.status(201).json({ quote, html, emailStatus, emailMessage });
+  } catch (error) {
+    return res.status(error.status || 500).json({ message: error.message || "No se pudo generar el presupuesto." });
+  }
 });
 
 router.get("/:id", (req, res) => {

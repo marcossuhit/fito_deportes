@@ -83,9 +83,44 @@ async function sendSaleInvoiceEmail(sale) {
   });
 }
 
+async function sendSaleQuoteEmail(sale) {
+  let nodemailer;
+  try {
+    nodemailer = require("nodemailer");
+  } catch {
+    const error = new Error("No se encontro nodemailer en el backend.");
+    error.code = "EMAIL_DEP_MISSING";
+    throw error;
+  }
+
+  const cfg = getEmailConfig();
+
+  const transport = nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure,
+    auth: {
+      user: cfg.user,
+      pass: cfg.pass
+    }
+  });
+
+  const customerName = `${sale.customer_first_name || ""} ${sale.customer_last_name || ""}`.trim();
+  const html = buildInvoiceHtml(sale, { autoPrint: false, documentType: "quote" });
+
+  return transport.sendMail({
+    from: cfg.from,
+    to: sale.customer_email,
+    subject: `Presupuesto ${sale.invoice_number} - Fito Deportes`,
+    text: `Hola ${customerName || "cliente"}, tu presupuesto ${sale.invoice_number} es por ${toMoney(sale.total_amount)}.`,
+    html
+  });
+}
+
 module.exports = {
   getInvoiceEmailConfigError,
   isInvoiceEmailEnabled,
   isValidEmail,
-  sendSaleInvoiceEmail
+  sendSaleInvoiceEmail,
+  sendSaleQuoteEmail
 };

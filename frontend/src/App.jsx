@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { api } from "./api";
 
 const emptyForm = {
@@ -273,6 +274,17 @@ function App() {
   const [invoiceEmailMessage, setInvoiceEmailMessage] = useState("");
   const [invoiceEmailError, setInvoiceEmailError] = useState("");
   const [invoiceEmailLoadingSaleId, setInvoiceEmailLoadingSaleId] = useState(null);
+  const [scannerActive, setScannerActive] = useState(false);
+  const [scannerLoading, setScannerLoading] = useState(false);
+  const [scannerError, setScannerError] = useState("");
+  const [scannerCameras, setScannerCameras] = useState([]);
+  const [selectedCameraId, setSelectedCameraId] = useState("");
+  const [salesScannerActive, setSalesScannerActive] = useState(false);
+  const [salesScannerLoading, setSalesScannerLoading] = useState(false);
+  const [salesScannerError, setSalesScannerError] = useState("");
+  const [salesScannerCameras, setSalesScannerCameras] = useState([]);
+  const [selectedSalesCameraId, setSelectedSalesCameraId] = useState("");
+  const [salesScanToast, setSalesScanToast] = useState("");
   const [usdQuote, setUsdQuote] = useState({
     sell: null,
     buy: null,
@@ -290,6 +302,10 @@ function App() {
   const invoiceDetailRef = useRef(null);
   const invoiceDetailFlashTimerRef = useRef(null);
   const stockFormRef = useRef(null);
+  const barcodeScannerRef = useRef(null);
+  const salesBarcodeScannerRef = useRef(null);
+  const salesScanLockRef = useRef(false);
+  const salesScanToastTimerRef = useRef(null);
 
   const cartTotal = useMemo(
     () => cart.reduce((sum, item) => sum + Number(item.price) * item.quantity, 0),
@@ -458,6 +474,56 @@ function App() {
 
   useEffect(() => {
     clearUiMessages();
+  }, [activeView]);
+
+  useEffect(() => {
+    return () => {
+      if (barcodeScannerRef.current) {
+        barcodeScannerRef.current
+          .stop()
+          .catch(() => {})
+          .finally(() => {
+            barcodeScannerRef.current?.clear().catch(() => {});
+            barcodeScannerRef.current = null;
+          });
+      }
+      if (salesBarcodeScannerRef.current) {
+        salesBarcodeScannerRef.current
+          .stop()
+          .catch(() => {})
+          .finally(() => {
+            salesBarcodeScannerRef.current?.clear().catch(() => {});
+            salesBarcodeScannerRef.current = null;
+          });
+      }
+      if (salesScanToastTimerRef.current) {
+        clearTimeout(salesScanToastTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isFormOpen) {
+      return;
+    }
+    if (scannerActive) {
+      stopBarcodeScanner();
+    }
+    setScannerError("");
+    setScannerCameras([]);
+    setSelectedCameraId("");
+  }, [isFormOpen]);
+
+  useEffect(() => {
+    if (activeView === "ventas") {
+      return;
+    }
+    if (salesScannerActive) {
+      stopSalesBarcodeScanner();
+    }
+    setSalesScannerError("");
+    setSalesScannerCameras([]);
+    setSelectedSalesCameraId("");
   }, [activeView]);
 
   useEffect(() => {
@@ -812,15 +878,9 @@ function App() {
     }
   }
 
-  function addToCart() {
-    setSaleError("");
-    setSaleMessage("");
-
-    const searchText = saleBarcode.trim();
-
+  function findSaleProduct(searchText) {
     if (!searchText) {
-      setSaleError("Ingresá código o nombre de producto para vender.");
-      return;
+      return { product: null, error: "Ingresá código o nombre de producto para vender." };
     }
 
     let product = products.find((item) => item.barcode === searchText);
@@ -836,13 +896,25 @@ function App() {
       if (matches.length === 1) {
         product = matches[0];
       } else if (matches.length > 1) {
-        setSaleError("Hay varias coincidencias. Elegí un producto de la lista.");
-        return;
+        return { product: null, error: "Hay varias coincidencias. Elegí un producto de la lista." };
       }
     }
 
     if (!product) {
-      setSaleError("No existe producto con ese código o nombre.");
+      return { product: null, error: "No existe producto con ese código o nombre." };
+    }
+
+    return { product, error: "" };
+  }
+
+  function addToCart() {
+    setSaleError("");
+    setSaleMessage("");
+
+    const searchText = saleBarcode.trim();
+    const { product, error: findError } = findSaleProduct(searchText);
+    if (!product) {
+      setSaleError(findError);
       return;
     }
 
@@ -942,6 +1014,63 @@ function App() {
       setCart([]);
       setSelectedCustomerId("");
       await reloadProductsAndStats();
+    } catch (err) {
+      setSaleError(err.message);
+    }
+  }
+
+  async function checkoutQuote() {
+    setSaleError("");
+    setSaleMessage("");
+
+    if (!cart.length) {
+      setSaleError("No hay productos en el carrito.");
+      return;
+    }
+
+    try {
+      const payload = {
+        paymentMethod,
+        customerId: selectedCustomerId ? Number(selectedCustomerId) : null,
+        items: cart.map((item) => ({
+          productId: item.productId,
+          quantity: item.quantity
+        }))
+      };
+
+      const data = await api.createQuote(payload);
+      const quote = data.quote;
+      const html = String(data?.html || "");
+      const hasSelectedCustomer = Boolean(selectedCustomerId);
+
+      const openQuotePrintWindow = () => {
+        const printWindow = window.open("", "_blank", "width=980,height=900");
+        if (!printWindow) {
+          throw new Error("El navegador bloqueó la ventana de impresión. Habilitá pop-ups e intentá de nuevo.");
+        }
+        if (!html) {
+          printWindow.close();
+          throw new Error("No se pudo generar el presupuesto para impresión.");
+        }
+        printWindow.document.open();
+        printWindow.document.write(html);
+        printWindow.document.close();
+      };
+
+      if (hasSelectedCustomer) {
+        if (data.emailStatus === "sent") {
+          openQuotePrintWindow();
+          setSaleMessage(data.emailMessage || `Presupuesto ${quote.invoice_number} enviado por email.`);
+        } else {
+          throw new Error(data.emailMessage || "No se pudo enviar el presupuesto por email.");
+        }
+      } else {
+        openQuotePrintWindow();
+        setSaleMessage(`Presupuesto ${quote.invoice_number} generado.`);
+      }
+
+      setCart([]);
+      setSelectedCustomerId("");
     } catch (err) {
       setSaleError(err.message);
     }
@@ -1133,6 +1262,246 @@ function App() {
     }
   }
 
+  async function startBarcodeScanner() {
+    if (scannerLoading || scannerActive) {
+      return;
+    }
+
+    setScannerError("");
+    setScannerLoading(true);
+    setScannerActive(true);
+
+    try {
+      if (!window.isSecureContext && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+        throw new Error("Para usar la cámara el sitio debe abrirse con HTTPS o en localhost.");
+      }
+
+      const cameras = await Html5Qrcode.getCameras();
+      if (!cameras.length) {
+        throw new Error("No se detectaron cámaras disponibles en este dispositivo.");
+      }
+
+      setScannerCameras(cameras);
+      const preferredCamera =
+        cameras.find((cam) => /back|rear|environment|trasera/i.test(String(cam.label || ""))) || cameras[0];
+      const cameraId = selectedCameraId || preferredCamera.id;
+      setSelectedCameraId(cameraId);
+
+      const scanner = new Html5Qrcode("barcode-scanner-reader");
+      barcodeScannerRef.current = scanner;
+
+      await scanner.start(
+        { deviceId: { exact: cameraId } },
+        {
+          fps: 8,
+          qrbox: { width: 280, height: 140 },
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E,
+            Html5QrcodeSupportedFormats.ITF
+          ]
+        },
+        (decodedText) => {
+          const value = String(decodedText || "").trim();
+          if (!value) {
+            return;
+          }
+          setForm((prev) => ({ ...prev, barcode: value }));
+          stopBarcodeScanner();
+        },
+        () => {}
+      );
+
+    } catch (err) {
+      setScannerError(err?.message || "No se pudo iniciar la cámara.");
+      if (barcodeScannerRef.current) {
+        barcodeScannerRef.current.clear().catch(() => {});
+        barcodeScannerRef.current = null;
+      }
+      setScannerActive(false);
+    } finally {
+      setScannerLoading(false);
+    }
+  }
+
+  async function stopBarcodeScanner() {
+    const scanner = barcodeScannerRef.current;
+    if (!scanner) {
+      setScannerActive(false);
+      return;
+    }
+
+    try {
+      await scanner.stop();
+    } catch {}
+
+    try {
+      await scanner.clear();
+    } catch {}
+
+    barcodeScannerRef.current = null;
+    setScannerActive(false);
+  }
+
+  async function switchBarcodeScannerCamera(nextCameraId) {
+    setSelectedCameraId(nextCameraId);
+    if (!scannerActive) {
+      return;
+    }
+    await stopBarcodeScanner();
+    setTimeout(() => {
+      setSelectedCameraId(nextCameraId);
+      startBarcodeScanner();
+    }, 80);
+  }
+
+  async function startSalesBarcodeScanner() {
+    if (salesScannerLoading || salesScannerActive) {
+      return;
+    }
+
+    setSalesScannerError("");
+    setSalesScannerLoading(true);
+    setSalesScannerActive(true);
+
+    try {
+      if (!window.isSecureContext && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+        throw new Error("Para usar la cámara el sitio debe abrirse con HTTPS o en localhost.");
+      }
+
+      const cameras = await Html5Qrcode.getCameras();
+      if (!cameras.length) {
+        throw new Error("No se detectaron cámaras disponibles en este dispositivo.");
+      }
+
+      setSalesScannerCameras(cameras);
+      const preferredCamera =
+        cameras.find((cam) => /back|rear|environment|trasera/i.test(String(cam.label || ""))) || cameras[0];
+      const cameraId = selectedSalesCameraId || preferredCamera.id;
+      setSelectedSalesCameraId(cameraId);
+
+      const scanner = new Html5Qrcode("sales-barcode-scanner-reader");
+      salesBarcodeScannerRef.current = scanner;
+
+      await scanner.start(
+        { deviceId: { exact: cameraId } },
+        {
+          fps: 8,
+          qrbox: { width: 280, height: 140 },
+          formatsToSupport: [
+            Html5QrcodeSupportedFormats.EAN_13,
+            Html5QrcodeSupportedFormats.EAN_8,
+            Html5QrcodeSupportedFormats.CODE_128,
+            Html5QrcodeSupportedFormats.CODE_39,
+            Html5QrcodeSupportedFormats.UPC_A,
+            Html5QrcodeSupportedFormats.UPC_E,
+            Html5QrcodeSupportedFormats.ITF
+          ]
+        },
+        (decodedText) => {
+          if (salesScanLockRef.current) {
+            return;
+          }
+          salesScanLockRef.current = true;
+
+          const value = String(decodedText || "").trim();
+          setSaleBarcode(value);
+
+          const { product } = findSaleProduct(value);
+          if (product) {
+            addProductToCart(product);
+            playSalesScanBeep();
+            showSalesScanToast(`${product.name} agregado al carrito`);
+          } else {
+            setSaleError("Código leído, pero no se encontró un producto único para ese valor.");
+          }
+
+          setTimeout(() => {
+            salesScanLockRef.current = false;
+          }, 500);
+        },
+        () => {}
+      );
+    } catch (err) {
+      setSalesScannerError(err?.message || "No se pudo iniciar la cámara.");
+      if (salesBarcodeScannerRef.current) {
+        salesBarcodeScannerRef.current.clear().catch(() => {});
+        salesBarcodeScannerRef.current = null;
+      }
+      setSalesScannerActive(false);
+    } finally {
+      setSalesScannerLoading(false);
+    }
+  }
+
+  async function stopSalesBarcodeScanner() {
+    const scanner = salesBarcodeScannerRef.current;
+    if (!scanner) {
+      setSalesScannerActive(false);
+      return;
+    }
+
+    try {
+      await scanner.stop();
+    } catch {}
+
+    try {
+      await scanner.clear();
+    } catch {}
+
+    salesBarcodeScannerRef.current = null;
+    setSalesScannerActive(false);
+    salesScanLockRef.current = false;
+  }
+
+  async function switchSalesBarcodeScannerCamera(nextCameraId) {
+    setSelectedSalesCameraId(nextCameraId);
+    if (!salesScannerActive) {
+      return;
+    }
+    await stopSalesBarcodeScanner();
+    setTimeout(() => {
+      setSelectedSalesCameraId(nextCameraId);
+      startSalesBarcodeScanner();
+    }, 80);
+  }
+
+  function playSalesScanBeep() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) {
+        return;
+      }
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 1100;
+      gain.gain.value = 0.07;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.09);
+      osc.onended = () => {
+        ctx.close().catch(() => {});
+      };
+    } catch {}
+  }
+
+  function showSalesScanToast(message) {
+    setSalesScanToast(message);
+    if (salesScanToastTimerRef.current) {
+      clearTimeout(salesScanToastTimerRef.current);
+    }
+    salesScanToastTimerRef.current = setTimeout(() => {
+      setSalesScanToast("");
+    }, 1400);
+  }
+
   function renderStockForm() {
     if (!isFormOpen) {
       return null;
@@ -1144,13 +1513,54 @@ function App() {
         <h2 className="mb-4 text-2xl font-bold">{editingGroupCode ? "Editar Producto" : "Agregar Producto"}</h2>
 
         <form onSubmit={saveProduct} className="grid gap-3 md:grid-cols-2">
-          <input
-            className="rounded-xl border-2 border-slate-300 px-4 py-3"
-            placeholder="Código de barras"
-            value={form.barcode}
-            onChange={(e) => setForm({ ...form, barcode: e.target.value })}
-            required
-          />
+          <div className="space-y-2 md:col-span-2">
+            <input
+              className="w-full rounded-xl border-2 border-slate-300 px-4 py-3"
+              placeholder="Código de barras"
+              value={form.barcode}
+              onChange={(e) => setForm({ ...form, barcode: e.target.value })}
+              required
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={startBarcodeScanner}
+                disabled={scannerLoading || scannerActive}
+                className="rounded-lg bg-slate-800 px-3 py-2 text-sm font-bold text-white hover:bg-slate-900 disabled:opacity-50"
+              >
+                {scannerLoading ? "Iniciando cámara..." : scannerActive ? "Escáner activo" : "Escanear con cámara"}
+              </button>
+              <button
+                type="button"
+                onClick={stopBarcodeScanner}
+                disabled={!scannerActive}
+                className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-bold text-slate-800 hover:bg-slate-300 disabled:opacity-50"
+              >
+                Detener escáner
+              </button>
+              {scannerCameras.length > 1 ? (
+                <select
+                  value={selectedCameraId}
+                  onChange={(e) => switchBarcodeScannerCamera(e.target.value)}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                >
+                  {scannerCameras.map((camera) => (
+                    <option key={camera.id} value={camera.id}>
+                      {camera.label || `Cámara ${camera.id}`}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+            </div>
+            <div className={`overflow-hidden rounded-xl border ${scannerActive ? "border-emerald-300" : "border-slate-200"} bg-slate-50`}>
+              <div
+                id="barcode-scanner-reader"
+                className={`w-full min-h-[240px] ${scannerActive ? "block" : "hidden"}`}
+              />
+              {!scannerActive ? <p className="px-3 py-2 text-sm text-slate-600">Abrí el escáner para leer el código desde cámara.</p> : null}
+            </div>
+            {scannerError ? <p className="rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700">{scannerError}</p> : null}
+          </div>
           <input
             className="rounded-xl border-2 border-slate-300 px-4 py-3"
             placeholder="Nombre del artículo"
@@ -1798,6 +2208,11 @@ function App() {
         )}
 
         <article className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+          {salesScanToast ? (
+            <p className="mb-3 rounded-lg border border-emerald-300 bg-emerald-100 px-3 py-2 text-sm font-bold text-emerald-800">
+              {salesScanToast}
+            </p>
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-1">
             <div className="relative">
               <input
@@ -1814,6 +2229,47 @@ function App() {
                 placeholder="Buscar por código o nombre"
                 className="w-full rounded-xl border-2 border-slate-300 px-4 py-3"
               />
+
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={startSalesBarcodeScanner}
+                  disabled={salesScannerLoading || salesScannerActive}
+                  className="rounded-lg bg-slate-800 px-3 py-2 text-sm font-bold text-white hover:bg-slate-900 disabled:opacity-50"
+                >
+                  {salesScannerLoading ? "Iniciando cámara..." : salesScannerActive ? "Escáner activo" : "Escanear código"}
+                </button>
+                <button
+                  type="button"
+                  onClick={stopSalesBarcodeScanner}
+                  disabled={!salesScannerActive}
+                  className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-bold text-slate-800 hover:bg-slate-300 disabled:opacity-50"
+                >
+                  Detener escáner
+                </button>
+                {salesScannerCameras.length > 1 ? (
+                  <select
+                    value={selectedSalesCameraId}
+                    onChange={(e) => switchSalesBarcodeScannerCamera(e.target.value)}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                  >
+                    {salesScannerCameras.map((camera) => (
+                      <option key={camera.id} value={camera.id}>
+                        {camera.label || `Cámara ${camera.id}`}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+              </div>
+
+              <div className={`mt-2 overflow-hidden rounded-xl border ${salesScannerActive ? "border-emerald-300" : "border-slate-200"} bg-slate-50`}>
+                <div
+                  id="sales-barcode-scanner-reader"
+                  className={`w-full min-h-[220px] ${salesScannerActive ? "block" : "hidden"}`}
+                />
+                {!salesScannerActive ? <p className="px-3 py-2 text-sm text-slate-600">Abrí el escáner para leer y agregar al carrito automáticamente.</p> : null}
+              </div>
+              {salesScannerError ? <p className="mt-2 rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700">{salesScannerError}</p> : null}
 
               {saleBarcode.trim() && (
                 <div className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-xl border border-slate-200 bg-white shadow-lg">
@@ -1918,13 +2374,22 @@ function App() {
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-emerald-50 p-3">
             <p className="text-2xl font-extrabold text-emerald-900">Total: {money(cartTotal)}</p>
-            <button
-              type="button"
-              onClick={checkoutSale}
-              className="rounded-xl bg-emerald-600 px-5 py-3 text-lg font-bold text-white hover:bg-emerald-700"
-            >
-              Cobrar y Facturar
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={checkoutSale}
+                className="rounded-xl bg-emerald-600 px-5 py-3 text-lg font-bold text-white hover:bg-emerald-700"
+              >
+                Cobrar y Facturar
+              </button>
+              <button
+                type="button"
+                onClick={checkoutQuote}
+                className="rounded-xl bg-amber-500 px-5 py-3 text-lg font-bold text-black hover:bg-amber-600"
+              >
+                Generar Presupuesto
+              </button>
+            </div>
           </div>
 
           {saleError && <p className="mt-3 rounded-lg bg-red-100 p-3 text-red-700">{saleError}</p>}

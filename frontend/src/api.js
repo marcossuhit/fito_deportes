@@ -84,6 +84,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  createQuote: (payload) =>
+    request("/sales/quote", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
 
   cashStatus: () => request("/cash/status"),
   cashHistory: () => request("/cash/history"),
