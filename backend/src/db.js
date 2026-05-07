@@ -94,8 +94,24 @@ function runMigrations() {
     "customer_id",
     "ALTER TABLE sales ADD COLUMN customer_id INTEGER"
   );
+  addColumnIfMissing(
+    "clients",
+    "condicion_iva",
+    "ALTER TABLE clients ADD COLUMN condicion_iva TEXT NOT NULL DEFAULT 'Consumidor Final'"
+  );
 
   db.exec("CREATE INDEX IF NOT EXISTS idx_sales_customer_id ON sales (customer_id)");
+  db.exec(
+    `CREATE TABLE IF NOT EXISTS client_debts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL,
+      amount NUMERIC NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (client_id) REFERENCES clients (id) ON DELETE CASCADE
+    )`
+  );
+  db.exec("CREATE INDEX IF NOT EXISTS idx_client_debts_client_id ON client_debts (client_id)");
 }
 
 function seedPredefinedUsers() {

@@ -17,8 +17,22 @@ const emptyClientForm = {
   lastName: "",
   cuit: "",
   phone: "",
-  email: ""
+  email: "",
+  condicionIva: "Consumidor Final"
 };
+const ivaConditionOptions = [
+  "Responsable Inscripto",
+  "Monotributista",
+  "Consumidor Final",
+  "Exento",
+  "Responsable no Inscripto",
+  "Sujeto no Categorizado",
+  "Proveedor del Exterior",
+  "Cliente del Exterior",
+  "IVA Liberado - Ley 19.640",
+  "Monotributista Social",
+  "Pequeño Contribuyente Eventual"
+];
 
 const productBrandOptionsRaw = [
   "SPORTCOM/DRB",
@@ -249,6 +263,7 @@ function App() {
   const [clientMessage, setClientMessage] = useState("");
   const [clientError, setClientError] = useState("");
   const [expandedClientPurchases, setExpandedClientPurchases] = useState({});
+  const [clientDebtForms, setClientDebtForms] = useState({});
 
   const [openingAmount, setOpeningAmount] = useState("0");
   const [closingAmount, setClosingAmount] = useState("0");
@@ -1159,11 +1174,39 @@ function App() {
         lastName: clientForm.lastName.trim(),
         cuit: clientForm.cuit.trim(),
         phone: clientForm.phone.trim(),
-        email: clientForm.email.trim()
+        email: clientForm.email.trim(),
+        condicionIva: clientForm.condicionIva
       };
       await api.createClient(payload);
       setClientMessage("Cliente creado correctamente.");
       setClientForm(emptyClientForm);
+      await reloadProductsAndStats();
+    } catch (err) {
+      setClientError(err.message);
+    }
+  }
+
+  async function saveClientDebt(clientId) {
+    const draft = clientDebtForms[clientId] || { amount: "", note: "" };
+    const amount = Number(draft.amount);
+
+    if (!Number.isFinite(amount) || amount === 0) {
+      setClientError("Ingresá un monto de adeudamiento válido (distinto de 0).");
+      return;
+    }
+
+    try {
+      setClientError("");
+      setClientMessage("");
+      await api.createClientDebt(clientId, {
+        amount,
+        note: String(draft.note || "").trim()
+      });
+      setClientMessage("Movimiento de adeudamiento registrado.");
+      setClientDebtForms((prev) => ({
+        ...prev,
+        [clientId]: { amount: "", note: "" }
+      }));
       await reloadProductsAndStats();
     } catch (err) {
       setClientError(err.message);
@@ -3104,9 +3147,21 @@ function App() {
               value={clientForm.email}
               onChange={(e) => setClientForm((prev) => ({ ...prev, email: e.target.value }))}
               placeholder="Email"
-              className="rounded-xl border-2 border-slate-300 px-4 py-3 md:col-span-2"
+              className="rounded-xl border-2 border-slate-300 px-4 py-3"
               required
             />
+            <select
+              value={clientForm.condicionIva}
+              onChange={(e) => setClientForm((prev) => ({ ...prev, condicionIva: e.target.value }))}
+              className="rounded-xl border-2 border-slate-300 px-4 py-3"
+              required
+            >
+              {ivaConditionOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
 
             <div className="md:col-span-2 flex flex-wrap gap-3">
               <button
@@ -3158,7 +3213,68 @@ function App() {
                   <p className="text-xs font-bold uppercase text-slate-500">Email</p>
                   <p className="text-lg font-extrabold text-slate-900">{client.email}</p>
                 </div>
+                <div>
+                  <p className="text-xs font-bold uppercase text-slate-500">Condición IVA</p>
+                  <p className="text-lg font-extrabold text-slate-900">{client.condicion_iva || "-"}</p>
+                </div>
               </div>
+
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-lg font-bold text-amber-900">Adeudamiento</h4>
+                    <p className="rounded-lg bg-white px-3 py-1 font-bold text-amber-900">
+                      Saldo: {money(client.debt_balance || 0)}
+                    </p>
+                  </div>
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="Monto (+deuda / -pago)"
+                      value={clientDebtForms[client.id]?.amount || ""}
+                      onChange={(e) =>
+                        setClientDebtForms((prev) => ({
+                          ...prev,
+                          [client.id]: { ...(prev[client.id] || { note: "" }), amount: e.target.value }
+                        }))
+                      }
+                      className="rounded-lg border border-amber-300 px-3 py-2"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Detalle (opcional)"
+                      value={clientDebtForms[client.id]?.note || ""}
+                      onChange={(e) =>
+                        setClientDebtForms((prev) => ({
+                          ...prev,
+                          [client.id]: { ...(prev[client.id] || { amount: "" }), note: e.target.value }
+                        }))
+                      }
+                      className="rounded-lg border border-amber-300 px-3 py-2"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => saveClientDebt(client.id)}
+                      className="rounded-lg bg-amber-600 px-3 py-2 font-bold text-white hover:bg-amber-700"
+                    >
+                      Registrar movimiento
+                    </button>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {(client.debts || []).slice(0, 10).map((debt) => (
+                      <div key={debt.id} className="flex flex-wrap items-center justify-between rounded-lg bg-white px-3 py-2 text-sm">
+                        <span>{new Date(debt.created_at).toLocaleString()}</span>
+                        <span className="font-semibold">{debt.note || "Sin detalle"}</span>
+                        <span className={`font-bold ${Number(debt.amount) >= 0 ? "text-red-700" : "text-emerald-700"}`}>
+                          {money(debt.amount)}
+                        </span>
+                      </div>
+                    ))}
+                    {!(client.debts || []).length && (
+                      <p className="text-sm text-amber-900">Sin movimientos de adeudamiento.</p>
+                    )}
+                  </div>
+                </div>
 
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                   <h4 className="text-lg font-bold text-slate-900">Compras realizadas</h4>

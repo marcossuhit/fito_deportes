@@ -45,8 +45,18 @@ CREATE TABLE IF NOT EXISTS clients (
   cuit TEXT NOT NULL UNIQUE,
   phone TEXT NOT NULL,
   email TEXT NOT NULL,
+  condicion_iva TEXT NOT NULL DEFAULT 'Consumidor Final',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS client_debts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id INTEGER NOT NULL,
+  amount NUMERIC NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (client_id) REFERENCES clients (id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS sales (
@@ -95,6 +105,7 @@ CREATE INDEX IF NOT EXISTS idx_products_barcode ON products (barcode);
 CREATE INDEX IF NOT EXISTS idx_products_low_stock ON products (stock, low_stock_threshold);
 CREATE INDEX IF NOT EXISTS idx_cash_sessions_status ON cash_sessions (status);
 CREATE INDEX IF NOT EXISTS idx_clients_cuit ON clients (cuit);
+CREATE INDEX IF NOT EXISTS idx_client_debts_client_id ON client_debts (client_id);
 CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales (created_at);
 CREATE INDEX IF NOT EXISTS idx_sales_cash_session_id ON sales (cash_session_id);
 CREATE INDEX IF NOT EXISTS idx_sale_items_product_id ON sale_items (product_id);

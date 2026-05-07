@@ -110,5 +110,10 @@ export const api = {
     request("/clients", {
       method: "POST",
       body: JSON.stringify(payload)
+    }),
+  createClientDebt: (clientId, payload) =>
+    request(`/clients/${clientId}/debts`, {
+      method: "POST",
+      body: JSON.stringify(payload)
     })
 };
