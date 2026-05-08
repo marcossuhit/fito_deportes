@@ -23,6 +23,63 @@ function parseTag(xml, tag) {
   return match ? match[1].trim() : "";
 }
 
+function decodeXmlEntities(value) {
+  return String(value || "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+function loadTaCache(cachePath) {
+  try {
+    if (!fs.existsSync(cachePath)) return {};
+    const raw = fs.readFileSync(cachePath, "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveTaCache(cachePath, cache) {
+  fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), "utf8");
+}
+
+function buildTaCacheKey({ mode, cuit, service }) {
+  return `${String(mode)}::${String(cuit)}::${String(service)}`;
+}
+
+function parseExpirationTime(loginTicketResponse) {
+  const raw = parseTag(loginTicketResponse, "expirationTime");
+  if (!raw) return null;
+  const dt = new Date(raw);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt.toISOString();
+}
+
+function getCachedTa({ mode, cuit, service, cachePath }) {
+  const key = buildTaCacheKey({ mode, cuit, service });
+  const cache = loadTaCache(cachePath);
+  const entry = cache[key];
+  if (!entry?.token || !entry?.sign || !entry?.expiresAt) return null;
+
+  const expiresAtMs = new Date(entry.expiresAt).getTime();
+  if (!Number.isFinite(expiresAtMs)) return null;
+
+  // Reutilizamos TA solo si todavía le quedan al menos 60s de vigencia.
+  if (Date.now() + 60 * 1000 >= expiresAtMs) return null;
+  return { token: entry.token, sign: entry.sign, raw: entry.raw || "", expiresAt: entry.expiresAt };
+}
+
+function setCachedTa({ mode, cuit, service, cachePath, token, sign, raw, expiresAt }) {
+  const key = buildTaCacheKey({ mode, cuit, service });
+  const cache = loadTaCache(cachePath);
+  cache[key] = { token, sign, raw, expiresAt };
+  saveTaCache(cachePath, cache);
+}
+
 function defaultWsaaUrl(mode) {
   return mode === "produccion"
     ? "https://wsaa.afip.gov.ar/ws/services/LoginCms"
@@ -35,21 +92,44 @@ function defaultWsfeUrl(mode) {
     : "https://wswhomo.afip.gov.ar/wsfev1/service.asmx";
 }
 
-function buildTra({ service, cuit }) {
+function formatWsaaDate(date) {
+  const local = new Date(
+    date.toLocaleString("en-US", {
+      timeZone: "America/Argentina/Buenos_Aires"
+    })
+  );
+
+  const yyyy = String(local.getFullYear());
+  const mm = String(local.getMonth() + 1).padStart(2, "0");
+  const dd = String(local.getDate()).padStart(2, "0");
+  const hh = String(local.getHours()).padStart(2, "0");
+  const min = String(local.getMinutes()).padStart(2, "0");
+  const sec = String(local.getSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}:${sec}-03:00`;
+}
+
+function wsaaDestinationByMode(mode) {
+  return mode === "produccion"
+    ? "cn=wsaa,o=afip,c=ar,serialNumber=CUIT 33693450239"
+    : "cn=wsaahomo,o=afip,c=ar,serialNumber=CUIT 33693450239";
+}
+
+function buildTra({ service, cuit, mode }) {
   const now = new Date();
-  const gen = new Date(now.getTime() - 60 * 1000).toISOString();
-  const exp = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
+  const gen = formatWsaaDate(new Date(now.getTime() - 10 * 60 * 1000));
+  const exp = formatWsaaDate(new Date(now.getTime() + 10 * 60 * 1000));
   const uniqueId = String(Math.floor(now.getTime() / 1000));
+  const destination = wsaaDestinationByMode(mode);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <loginTicketRequest version="1.0">
   <header>
+    <destination>${escapeXml(destination)}</destination>
     <uniqueId>${uniqueId}</uniqueId>
     <generationTime>${gen}</generationTime>
     <expirationTime>${exp}</expirationTime>
   </header>
   <service>${escapeXml(service)}</service>
-  <destination>cn=${escapeXml(cuit)},o=afip,c=ar,serialNumber=CUIT ${escapeXml(cuit)}</destination>
 </loginTicketRequest>`;
 }
 
@@ -115,7 +195,15 @@ async function postSoap({ url, soapAction, xml, timeoutMs }) {
 }
 
 async function loginCms({ wsaaUrl, certPath, keyPath, timeoutMs, cuit }) {
-  const traXml = buildTra({ service: "wsfe", cuit });
+  const mode = String(process.env.ARCA_MODE || "homologacion").toLowerCase();
+  const service = "wsfe";
+  const cachePath = path.join(path.dirname(certPath), ".ta-cache.json");
+  const cachedTa = getCachedTa({ mode, cuit, service, cachePath });
+  if (cachedTa) {
+    return cachedTa;
+  }
+
+  const traXml = buildTra({ service, cuit, mode });
   const cms = await signTraCmsBase64({ traXml, certPath, keyPath });
 
   const envelope = `<?xml version="1.0" encoding="UTF-8"?>
@@ -128,26 +216,52 @@ async function loginCms({ wsaaUrl, certPath, keyPath, timeoutMs, cuit }) {
   </soapenv:Body>
 </soapenv:Envelope>`;
 
-  const raw = await postSoap({
-    url: wsaaUrl,
-    soapAction: "",
-    xml: envelope,
-    timeoutMs
-  });
+  let raw = "";
+  try {
+    raw = await postSoap({
+      url: wsaaUrl,
+      soapAction: "",
+      xml: envelope,
+      timeoutMs
+    });
+  } catch (error) {
+    if (String(error.message || "").includes("coe.alreadyAuthenticated")) {
+      const fallbackTa = getCachedTa({ mode, cuit, service, cachePath });
+      if (fallbackTa) {
+        return fallbackTa;
+      }
+    }
+    throw error;
+  }
 
   const loginTicketResponse = parseTag(raw, "loginCmsReturn");
   if (!loginTicketResponse) {
     throw new Error("WSAA no devolvió loginCmsReturn.");
   }
 
-  const token = parseTag(loginTicketResponse, "token");
-  const sign = parseTag(loginTicketResponse, "sign");
+  const decodedLoginTicketResponse = decodeXmlEntities(loginTicketResponse);
+  const token = parseTag(decodedLoginTicketResponse, "token");
+  const sign = parseTag(decodedLoginTicketResponse, "sign");
 
   if (!token || !sign) {
     throw new Error("WSAA no devolvió token/sign válidos.");
   }
 
-  return { token, sign, raw: loginTicketResponse };
+  const expiresAt = parseExpirationTime(decodedLoginTicketResponse);
+  if (expiresAt) {
+    setCachedTa({
+      mode,
+      cuit,
+      service,
+      cachePath,
+      token,
+      sign,
+      raw: decodedLoginTicketResponse,
+      expiresAt
+    });
+  }
+
+  return { token, sign, raw: decodedLoginTicketResponse, expiresAt };
 }
 
 async function getLastAuthorized({ wsfeUrl, auth, cuit, ptoVta, cbteTipo, timeoutMs }) {
@@ -200,6 +314,7 @@ async function createComprobante({
   concepto,
   monId,
   monCotiz,
+  condicionIvaReceptorId,
   timeoutMs
 }) {
   const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -236,6 +351,7 @@ async function createComprobante({
             <ar:ImpTrib>0.00</ar:ImpTrib>
             <ar:MonId>${escapeXml(monId)}</ar:MonId>
             <ar:MonCotiz>${escapeXml(String(monCotiz))}</ar:MonCotiz>
+            <ar:CondicionIVAReceptorId>${escapeXml(String(condicionIvaReceptorId || 5))}</ar:CondicionIVAReceptorId>
             <ar:Iva>
               <ar:AlicIva>
                 <ar:Id>${escapeXml(ivaId)}</ar:Id>

@@ -74,6 +74,37 @@ function amountsFromPayload(payload, ivaRate) {
   };
 }
 
+function condicionIvaReceptorIdFromPayload(payload) {
+  const raw = String(
+    payload?.customerIvaCondition ||
+    payload?.customer_iva_condition ||
+    payload?.condicionIva ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+
+  const byName = new Map([
+    ["responsable inscripto", 1],
+    ["exento", 4],
+    ["consumidor final", 5],
+    ["monotributista", 6],
+    ["sujeto no categorizado", 7],
+    ["proveedor del exterior", 8],
+    ["cliente del exterior", 9],
+    ["iva liberado - ley 19.640", 10],
+    ["iva liberado", 10],
+    ["monotributista social", 13],
+    ["pequeño contribuyente eventual", 15],
+    ["responsable no inscripto", 15]
+  ]);
+
+  if (byName.has(raw)) {
+    return byName.get(raw);
+  }
+  return 5;
+}
+
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
@@ -86,6 +117,7 @@ app.post("/comprobantes", authMiddleware, async (req, res) => {
     const payload = req.body || {};
     const { docTipo, docNro } = docFromPayload(payload, cfg.docTipoDefault);
     const { impTotal, impNeto, impIva, ivaRate } = amountsFromPayload(payload, cfg.ivaRate);
+    const condicionIvaReceptorId = condicionIvaReceptorIdFromPayload(payload);
 
     const auth = await loginCms({
       wsaaUrl: cfg.wsaaUrl,
@@ -123,6 +155,7 @@ app.post("/comprobantes", authMiddleware, async (req, res) => {
       concepto: cfg.concepto,
       monId: cfg.monId,
       monCotiz: cfg.monCotiz,
+      condicionIvaReceptorId,
       timeoutMs: cfg.timeoutMs
     });
 

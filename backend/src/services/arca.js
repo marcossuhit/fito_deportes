@@ -39,6 +39,8 @@ function buildArcaPayload({ sale, items }) {
     createdAt: sale.created_at,
     seller: sale.seller,
     paymentMethod: sale.payment_method,
+    customerCuit: sale.customer_cuit || null,
+    customerIvaCondition: sale.customer_condicion_iva || null,
     totalAmount: Number(sale.total_amount),
     items: (items || []).map((item) => ({
       productId: item.product_id,

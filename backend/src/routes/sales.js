@@ -39,12 +39,13 @@ function getSaleWithItems(id) {
   const sale = db
     .prepare(
       `SELECT s.id, s.invoice_number, s.payment_method, s.total_amount, s.customer_id,
-              s.arca_status, s.arca_comprobante_id, s.arca_emitted_at, s.arca_last_error,
+              s.arca_status, s.arca_comprobante_id, s.arca_emitted_at, s.arca_last_error, s.arca_response_payload,
               s.created_at,
               u.username AS seller,
               c.first_name AS customer_first_name,
               c.last_name AS customer_last_name,
               c.cuit AS customer_cuit,
+              c.condicion_iva AS customer_condicion_iva,
               c.email AS customer_email
        FROM sales s
        JOIN users u ON u.id = s.seller_user_id
@@ -67,6 +68,21 @@ function getSaleWithItems(id) {
     .all(id);
 
   return { ...sale, items };
+}
+
+function withArcaFields(sale) {
+  let payload = null;
+  try {
+    payload = sale?.arca_response_payload ? JSON.parse(sale.arca_response_payload) : null;
+  } catch {
+    payload = null;
+  }
+
+  return {
+    ...sale,
+    arca_cae: payload?.cae || null,
+    arca_cae_vto: payload?.caeVto || null
+  };
 }
 
 router.get("/", (_req, res) => {
@@ -264,6 +280,25 @@ router.get("/:id/print-html", (req, res) => {
   return res.json({ html });
 });
 
+router.get("/:id/arca/print-html", (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({ message: "ID de venta inválido." });
+  }
+
+  const sale = getSaleWithItems(id);
+  if (!sale) {
+    return res.status(404).json({ message: "Venta no encontrada." });
+  }
+  if (sale.arca_status !== "issued") {
+    return res.status(409).json({ message: "La venta aún no tiene comprobante ARCA emitido." });
+  }
+
+  const saleWithArca = withArcaFields(sale);
+  const html = buildInvoiceHtml(saleWithArca, { autoPrint: true, documentType: "arca" });
+  return res.json({ html });
+});
+
 router.post("/:id/send-email", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
@@ -306,6 +341,7 @@ router.post("/:id/arca/generate", async (req, res) => {
     .prepare(
       `SELECT s.id, s.invoice_number, s.payment_method, s.total_amount, s.customer_id,
               s.arca_status, s.arca_comprobante_id, s.arca_emitted_at,
+              s.arca_response_payload,
               s.created_at, u.username AS seller,
               c.first_name AS customer_first_name,
               c.last_name AS customer_last_name,

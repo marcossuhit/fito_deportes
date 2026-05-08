@@ -72,12 +72,31 @@ async function sendSaleInvoiceEmail(sale) {
   });
 
   const customerName = `${sale.customer_first_name || ""} ${sale.customer_last_name || ""}`.trim();
-  const html = buildInvoiceHtml(sale, { autoPrint: false });
+  let arcaPayload = null;
+  try {
+    arcaPayload = sale?.arca_response_payload ? JSON.parse(sale.arca_response_payload) : null;
+  } catch {
+    arcaPayload = null;
+  }
+  const hasArcaFiscalData =
+    String(sale?.arca_status || "").toLowerCase() === "issued" &&
+    String(sale?.arca_comprobante_id || "").trim() &&
+    String(arcaPayload?.cae || "").trim();
+
+  const html = buildInvoiceHtml(
+    {
+      ...sale,
+      arca_cae: arcaPayload?.cae || null,
+      arca_cae_vto: arcaPayload?.caeVto || null
+    },
+    { autoPrint: false, documentType: hasArcaFiscalData ? "arca" : "invoice" }
+  );
+  const subjectPrefix = hasArcaFiscalData ? "Factura ARCA" : "Factura";
 
   return transport.sendMail({
     from: cfg.from,
     to: sale.customer_email,
-    subject: `Factura ${sale.invoice_number} - Fito Deportes`,
+    subject: `${subjectPrefix} ${sale.invoice_number} - Fito Deportes`,
     text: `Hola ${customerName || "cliente"}, tu factura ${sale.invoice_number} es por ${toMoney(sale.total_amount)}.`,
     html
   });

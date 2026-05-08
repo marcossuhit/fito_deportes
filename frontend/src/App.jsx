@@ -157,6 +157,24 @@ function arcaStatusTone(value) {
   return "bg-slate-200 text-slate-800";
 }
 
+function parseArcaFiscalData(arcaComprobanteId, rawPayload) {
+  let payload = null;
+  try {
+    payload = rawPayload ? JSON.parse(rawPayload) : null;
+  } catch {
+    payload = null;
+  }
+
+  const cae = String(payload?.cae || "").trim() || "-";
+  const caeVto = String(payload?.caeVto || "").trim() || "-";
+  const parts = String(arcaComprobanteId || "").split("-");
+  const puntoVta = parts.length >= 1 ? parts[0] : "-";
+  const tipoCbte = parts.length >= 2 ? parts[1] : "-";
+  const numeroCbte = parts.length >= 3 ? parts[2] : "-";
+
+  return { cae, caeVto, puntoVta, tipoCbte, numeroCbte };
+}
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -319,6 +337,8 @@ function App() {
   });
   const invoiceDetailRef = useRef(null);
   const invoiceDetailFlashTimerRef = useRef(null);
+  const previousViewRef = useRef("inicio");
+  const skipFacturasResetRef = useRef(false);
   const stockFormRef = useRef(null);
   const barcodeScannerRef = useRef(null);
   const salesBarcodeScannerRef = useRef(null);
@@ -493,6 +513,25 @@ function App() {
 
   useEffect(() => {
     clearUiMessages();
+  }, [activeView]);
+
+  useEffect(() => {
+    if (
+      activeView === "facturas" &&
+      previousViewRef.current !== "facturas" &&
+      !skipFacturasResetRef.current
+    ) {
+      setSelectedSaleId(null);
+      setSelectedSaleDetail(null);
+      setSelectedSaleError("");
+      setExpandedSections((prev) => ({
+        ...prev,
+        facturas_detalle: false
+      }));
+    }
+
+    skipFacturasResetRef.current = false;
+    previousViewRef.current = activeView;
   }, [activeView]);
 
   useEffect(() => {
@@ -1070,7 +1109,7 @@ function App() {
     }
 
     try {
-      setSalesActionLabel("Procesando cobro y generando factura...");
+      setSalesActionLabel("Procesando cobro y generando factura interna...");
       setSalesActionLoading(true);
       const payload = {
         paymentMethod,
@@ -1277,6 +1316,7 @@ function App() {
     }
 
     if (jumpToInvoices) {
+      skipFacturasResetRef.current = true;
       setActiveView("facturas");
     }
     setExpandedSections((prev) => ({
@@ -1311,13 +1351,32 @@ function App() {
     setArcaMessage("");
     setArcaError("");
     setArcaLoadingSaleId(Number(saleId));
+    const printWindow = window.open("", "_blank", "width=980,height=900");
 
     try {
       const data = await api.generateArcaComprobante(Number(saleId), force);
       setArcaMessage(data.message || "Comprobante ARCA generado correctamente.");
+
+      if (!printWindow) {
+        throw new Error("El navegador bloqueó la ventana de impresión. Habilitá pop-ups e intentá de nuevo.");
+      }
+      const printData = await api.getSaleArcaPrintHtml(Number(saleId));
+      const html = String(printData?.html || "");
+      if (!html) {
+        throw new Error("No se pudo generar la factura para impresión.");
+      }
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+
       await reloadProductsAndStats();
       await openSaleDetail(Number(saleId), { jumpToInvoices: true });
     } catch (err) {
+      if (printWindow) {
+        try {
+          printWindow.close();
+        } catch {}
+      }
       setArcaError(err.message);
       await reloadProductsAndStats();
       if (jumpToInvoices || selectedSaleId === Number(saleId)) {
@@ -1374,6 +1433,38 @@ function App() {
     } catch (err) {
       printWindow.close();
       setSelectedSaleError(err.message || "No se pudo imprimir la factura.");
+    }
+  }
+
+  async function printSelectedArcaInvoice() {
+    if (!selectedSaleDetail) {
+      setSelectedSaleError("Seleccioná una factura para imprimir el comprobante ARCA.");
+      setExpandedSections((prev) => ({ ...prev, facturas_detalle: true }));
+      return;
+    }
+    if (selectedSaleDetail.arca_status !== "issued") {
+      setSelectedSaleError("La factura seleccionada aún no tiene comprobante ARCA emitido.");
+      return;
+    }
+
+    const printWindow = window.open("", "_blank", "width=980,height=900");
+    if (!printWindow) {
+      setSelectedSaleError("El navegador bloqueó la ventana de impresión. Habilitá pop-ups e intentá de nuevo.");
+      return;
+    }
+
+    try {
+      const data = await api.getSaleArcaPrintHtml(Number(selectedSaleDetail.id));
+      const html = String(data?.html || "");
+      if (!html) {
+        throw new Error("No se pudo generar el comprobante ARCA para impresión.");
+      }
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+    } catch (err) {
+      printWindow.close();
+      setSelectedSaleError(err.message || "No se pudo imprimir el comprobante ARCA.");
     }
   }
 
@@ -2808,6 +2899,9 @@ function App() {
 
   function renderFacturas() {
     const selected = selectedSaleDetail;
+    const arcaFiscal = selected
+      ? parseArcaFiscalData(selected.arca_comprobante_id, selected.arca_response_payload)
+      : null;
 
     return (
       <div className="space-y-4">
@@ -2900,6 +2994,12 @@ function App() {
         </article>
 
         <section className="overflow-x-auto rounded-2xl bg-white p-2 shadow-sm ring-1 ring-slate-200">
+          <div className="mb-2 flex items-center justify-between px-2 pt-1">
+            <h3 className="text-lg font-bold text-slate-900">Lista de facturas</h3>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Seleccioná una fila y luego “Ver detalle”
+            </p>
+          </div>
           <table className="min-w-full border-separate border-spacing-y-2">
             <thead>
               <tr className="text-left text-lg">
@@ -2961,20 +3061,30 @@ function App() {
         </section>
 
         <CollapsibleSection
-          title="Detalle de factura"
-          description="Información completa de la factura seleccionada."
+          title="Detalle de factura seleccionada"
+          description="Arranca cerrado al ingresar. Abrilo al elegir una factura de la lista."
           isOpen={expandedSections.facturas_detalle}
           onToggle={() => toggleSection("facturas_detalle")}
           className="ring-1 ring-slate-200"
           headerActions={
-            <button
-              type="button"
-              onClick={printSelectedInvoice}
-              disabled={!selected || selectedSaleLoading}
-              className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-bold text-white hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Imprimir
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={printSelectedInvoice}
+                disabled={!selected || selectedSaleLoading}
+                className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-bold text-white hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Imprimir Factura Interna
+              </button>
+              <button
+                type="button"
+                onClick={printSelectedArcaInvoice}
+                disabled={!selected || selected.arca_status !== "issued" || selectedSaleLoading}
+                className="rounded-xl bg-indigo-700 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Imprimir Factura ARCA
+              </button>
+            </div>
           }
         >
           <div
@@ -3036,6 +3146,31 @@ function App() {
                   <p className="rounded-lg bg-red-100 p-3 text-red-700">
                     Último error ARCA: {selected.arca_last_error}
                   </p>
+                )}
+
+                {selected.arca_status === "issued" && arcaFiscal && (
+                  <div className="grid gap-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 md:grid-cols-2 xl:grid-cols-5">
+                    <div>
+                      <p className="text-xs font-bold uppercase text-indigo-700">CAE</p>
+                      <p className="text-sm font-extrabold text-indigo-900">{arcaFiscal.cae}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold uppercase text-indigo-700">Vto. CAE</p>
+                      <p className="text-sm font-extrabold text-indigo-900">{arcaFiscal.caeVto}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold uppercase text-indigo-700">Punto de venta</p>
+                      <p className="text-sm font-extrabold text-indigo-900">{arcaFiscal.puntoVta}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold uppercase text-indigo-700">Tipo cbte</p>
+                      <p className="text-sm font-extrabold text-indigo-900">{arcaFiscal.tipoCbte}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold uppercase text-indigo-700">Número</p>
+                      <p className="text-sm font-extrabold text-indigo-900">{arcaFiscal.numeroCbte}</p>
+                    </div>
+                  </div>
                 )}
 
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">

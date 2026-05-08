@@ -70,6 +70,7 @@ export const api = {
   listSales: () => request("/sales"),
   getSale: (id) => request(`/sales/${id}`),
   getSalePrintHtml: (id) => request(`/sales/${id}/print-html`),
+  getSaleArcaPrintHtml: (id) => request(`/sales/${id}/arca/print-html`),
   sendSaleInvoiceEmail: (id) =>
     request(`/sales/${id}/send-email`, {
       method: "POST"
