@@ -48,12 +48,76 @@ function validateConfig(cfg) {
   if (!Number.isInteger(cfg.cbteTipo) || cfg.cbteTipo <= 0) throw new Error("ARCA_CBTE_TIPO inválido.");
 }
 
+function normalizeIvaCondition(payload) {
+  return String(
+    payload?.customerIvaCondition ||
+    payload?.customer_iva_condition ||
+    payload?.condicionIva ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function isConsumidorFinal(ivaCondition) {
+  return ivaCondition === "consu final" || ivaCondition === "consumidoriva final" || ivaCondition === "consumidor final";
+}
+
+function parseDocNumber(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function isValidCuit(raw) {
+  if (!/^\d{11}$/.test(raw)) return false;
+  const weights = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+  const check = raw
+    .slice(0, 10)
+    .split("")
+    .reduce((sum, digit, idx) => sum + Number(digit) * weights[idx], 0);
+  const mod = 11 - (check % 11);
+  const verifier = mod === 11 ? 0 : mod === 10 ? 9 : mod;
+  return verifier === Number(raw[10]);
+}
+
 function docFromPayload(payload, docTipoDefault) {
-  const raw = String(payload?.customerCuit || payload?.customer_cuit || "").replace(/\D/g, "");
-  if (raw.length >= 8) {
-    return { docTipo: 80, docNro: Number(raw) }; // CUIT
+  const explicitDocTipo = Number(
+    payload?.customerDocTipo || payload?.customer_doc_tipo || payload?.docTipo || payload?.doc_tipo || 0
+  );
+  const explicitDocNroRaw = parseDocNumber(
+    payload?.customerDocNro || payload?.customer_doc_nro || payload?.docNro || payload?.doc_nro
+  );
+
+  if (Number.isInteger(explicitDocTipo) && explicitDocTipo > 0) {
+    return {
+      docTipo: explicitDocTipo,
+      docNro: explicitDocNroRaw ? Number(explicitDocNroRaw) : 0
+    };
   }
-  return { docTipo: Number(docTipoDefault), docNro: 0 };
+
+  const ivaCondition = normalizeIvaCondition(payload);
+  const rawDoc = parseDocNumber(
+    payload?.customerCuit ||
+    payload?.customer_cuit ||
+    payload?.customerDocNro ||
+    payload?.customer_doc_nro
+  );
+
+  if (isConsumidorFinal(ivaCondition)) {
+    if (rawDoc.length >= 7 && rawDoc.length <= 8) {
+      return { docTipo: 96, docNro: Number(rawDoc) }; // DNI
+    }
+    return { docTipo: Number(docTipoDefault || 99), docNro: 0 };
+  }
+
+  if (isValidCuit(rawDoc)) {
+    return { docTipo: 80, docNro: Number(rawDoc) }; // CUIT
+  }
+
+  if (rawDoc.length >= 7 && rawDoc.length <= 8) {
+    return { docTipo: 96, docNro: Number(rawDoc) }; // DNI
+  }
+
+  return { docTipo: Number(docTipoDefault || 99), docNro: 0 };
 }
 
 function amountsFromPayload(payload, ivaRate) {
@@ -75,14 +139,7 @@ function amountsFromPayload(payload, ivaRate) {
 }
 
 function condicionIvaReceptorIdFromPayload(payload) {
-  const raw = String(
-    payload?.customerIvaCondition ||
-    payload?.customer_iva_condition ||
-    payload?.condicionIva ||
-    ""
-  )
-    .trim()
-    .toLowerCase();
+  const raw = normalizeIvaCondition(payload);
 
   const byName = new Map([
     ["iva resp inscripto", 1],
@@ -113,14 +170,7 @@ function condicionIvaReceptorIdFromPayload(payload) {
 }
 
 function resolveCbteTipoFromPayload(payload, fallbackCbteTipo) {
-  const raw = String(
-    payload?.customerIvaCondition ||
-    payload?.customer_iva_condition ||
-    payload?.condicionIva ||
-    ""
-  )
-    .trim()
-    .toLowerCase();
+  const raw = normalizeIvaCondition(payload);
 
   // Factura A
   if (
