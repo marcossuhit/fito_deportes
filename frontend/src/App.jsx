@@ -21,17 +21,11 @@ const emptyClientForm = {
   condicionIva: "Consumidor Final"
 };
 const ivaConditionOptions = [
-  "Responsable Inscripto",
-  "Monotributista",
+  "IVA Responsable Inscripto",
+  "Monotributo",
+  "IVA Exento",
   "Consumidor Final",
-  "Exento",
-  "Responsable no Inscripto",
-  "Sujeto no Categorizado",
-  "Proveedor del Exterior",
-  "Cliente del Exterior",
-  "IVA Liberado - Ley 19.640",
-  "Monotributista Social",
-  "Pequeño Contribuyente Eventual"
+  "IVA No Alcanzado"
 ];
 
 const productBrandOptionsRaw = [
@@ -278,6 +272,7 @@ function App() {
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
 
   const [clientForm, setClientForm] = useState(emptyClientForm);
+  const [editingClientId, setEditingClientId] = useState(null);
   const [clientMessage, setClientMessage] = useState("");
   const [clientError, setClientError] = useState("");
   const [expandedClientPurchases, setExpandedClientPurchases] = useState({});
@@ -339,7 +334,10 @@ function App() {
   const invoiceDetailFlashTimerRef = useRef(null);
   const previousViewRef = useRef("inicio");
   const skipFacturasResetRef = useRef(false);
+  const clientFormFirstInputRef = useRef(null);
   const stockFormRef = useRef(null);
+  const stockBarcodeInputRef = useRef(null);
+  const saleBarcodeInputRef = useRef(null);
   const barcodeScannerRef = useRef(null);
   const salesBarcodeScannerRef = useRef(null);
   const salesScanLockRef = useRef(false);
@@ -574,6 +572,9 @@ function App() {
 
   useEffect(() => {
     if (activeView === "ventas") {
+      requestAnimationFrame(() => {
+        saleBarcodeInputRef.current?.focus();
+      });
       return;
     }
     setSaleBarcode("");
@@ -731,6 +732,13 @@ function App() {
     setForm(emptyForm);
     setIsFormOpen(true);
     setError("");
+    requestAnimationFrame(() => {
+      stockFormRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+      stockBarcodeInputRef.current?.focus();
+    });
   }
 
   function openEditForm(group) {
@@ -1216,13 +1224,44 @@ function App() {
         email: clientForm.email.trim(),
         condicionIva: clientForm.condicionIva
       };
-      await api.createClient(payload);
-      setClientMessage("Cliente creado correctamente.");
+      if (editingClientId) {
+        await api.updateClient(Number(editingClientId), payload);
+        setClientMessage("Cliente actualizado correctamente.");
+      } else {
+        await api.createClient(payload);
+        setClientMessage("Cliente creado correctamente.");
+      }
+      setEditingClientId(null);
       setClientForm(emptyClientForm);
       await reloadProductsAndStats();
     } catch (err) {
       setClientError(err.message);
     }
+  }
+
+  function startClientEdit(client) {
+    setClientError("");
+    setClientMessage("");
+    setEditingClientId(client.id);
+    setClientForm({
+      firstName: String(client.first_name || ""),
+      lastName: String(client.last_name || ""),
+      cuit: String(client.cuit || ""),
+      phone: String(client.phone || ""),
+      email: String(client.email || ""),
+      condicionIva: String(client.condicion_iva || "IVA no alcanzado")
+    });
+    requestAnimationFrame(() => {
+      clientFormFirstInputRef.current?.focus();
+      clientFormFirstInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }
+
+  function cancelClientEdit() {
+    setEditingClientId(null);
+    setClientForm(emptyClientForm);
+    setClientError("");
+    setClientMessage("");
   }
 
   async function saveClientDebt(clientId) {
@@ -1740,6 +1779,7 @@ function App() {
         <form onSubmit={saveProduct} className="grid gap-3 md:grid-cols-2">
           <div className="space-y-2 md:col-span-2">
             <input
+              ref={stockBarcodeInputRef}
               className="w-full rounded-xl border-2 border-slate-300 px-4 py-3"
               placeholder="Código de barras"
               value={form.barcode}
@@ -2441,6 +2481,7 @@ function App() {
           <div className="grid gap-3 sm:grid-cols-1">
             <div className="relative">
               <input
+                ref={saleBarcodeInputRef}
                 value={saleBarcode}
                 onChange={(e) => {
                   setSaleBarcode(e.target.value);
@@ -3247,9 +3288,12 @@ function App() {
         />
 
         <section className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-          <h3 className="mb-3 text-2xl font-bold text-slate-900">Nuevo cliente</h3>
+          <h3 className="mb-3 text-2xl font-bold text-slate-900">
+            {editingClientId ? `Editar cliente #${editingClientId}` : "Nuevo cliente"}
+          </h3>
           <form onSubmit={saveClient} className="grid gap-3 md:grid-cols-2">
             <input
+              ref={clientFormFirstInputRef}
               value={clientForm.firstName}
               onChange={(e) => setClientForm((prev) => ({ ...prev, firstName: e.target.value }))}
               placeholder="Nombre"
@@ -3303,8 +3347,17 @@ function App() {
                 type="submit"
                 className="rounded-xl bg-emerald-600 px-5 py-3 text-lg font-bold text-white hover:bg-emerald-700"
               >
-                Guardar cliente
+                {editingClientId ? "Actualizar cliente" : "Guardar cliente"}
               </button>
+              {editingClientId && (
+                <button
+                  type="button"
+                  onClick={cancelClientEdit}
+                  className="rounded-xl bg-slate-200 px-5 py-3 text-lg font-bold text-slate-800 hover:bg-slate-300"
+                >
+                  Cancelar edición
+                </button>
+              )}
             </div>
           </form>
 
@@ -3321,9 +3374,18 @@ function App() {
               }`}
             >
               <div className={`px-4 py-2 ${index % 2 === 0 ? "bg-indigo-50" : "bg-emerald-50"}`}>
-                <p className="text-sm font-bold uppercase tracking-wide text-slate-700">
-                  Cliente #{client.id}
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-bold uppercase tracking-wide text-slate-700">
+                    Cliente #{client.id}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => startClientEdit(client)}
+                    className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800"
+                  >
+                    Editar
+                  </button>
+                </div>
               </div>
 
               <div className="p-4">
@@ -3346,7 +3408,7 @@ function App() {
                 </div>
                 <div>
                   <p className="text-xs font-bold uppercase text-slate-500">Email</p>
-                  <p className="text-lg font-extrabold text-slate-900">{client.email}</p>
+                  <p className="break-all text-lg font-extrabold text-slate-900">{client.email}</p>
                 </div>
                 <div>
                   <p className="text-xs font-bold uppercase text-slate-500">Condición IVA</p>

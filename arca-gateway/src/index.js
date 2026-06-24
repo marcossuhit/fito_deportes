@@ -85,10 +85,17 @@ function condicionIvaReceptorIdFromPayload(payload) {
     .toLowerCase();
 
   const byName = new Map([
+    ["iva resp inscripto", 1],
+    ["iva responsable inscripto", 1],
     ["responsable inscripto", 1],
+    ["monotributo", 6],
     ["exento", 4],
+    ["iva exento", 4],
     ["consumidor final", 5],
+    ["consu final", 5],
+    ["consumidoriva final", 5],
     ["monotributista", 6],
+    ["iva no alcanzado", 7],
     ["sujeto no categorizado", 7],
     ["proveedor del exterior", 8],
     ["cliente del exterior", 9],
@@ -105,6 +112,42 @@ function condicionIvaReceptorIdFromPayload(payload) {
   return 5;
 }
 
+function resolveCbteTipoFromPayload(payload, fallbackCbteTipo) {
+  const raw = String(
+    payload?.customerIvaCondition ||
+    payload?.customer_iva_condition ||
+    payload?.condicionIva ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+
+  // Factura A
+  if (
+    raw === "iva resp inscripto" ||
+    raw === "iva responsable inscripto" ||
+    raw === "responsable inscripto" ||
+    raw === "monotributo" ||
+    raw === "monotributista"
+  ) {
+    return 1;
+  }
+
+  // Factura B
+  if (
+    raw === "iva exento" ||
+    raw === "exento" ||
+    raw === "consu final" ||
+    raw === "consumidoriva final" ||
+    raw === "consumidor final" ||
+    raw === "iva no alcanzado"
+  ) {
+    return 6;
+  }
+
+  return Number(fallbackCbteTipo || 6);
+}
+
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
@@ -118,6 +161,7 @@ app.post("/comprobantes", authMiddleware, async (req, res) => {
     const { docTipo, docNro } = docFromPayload(payload, cfg.docTipoDefault);
     const { impTotal, impNeto, impIva, ivaRate } = amountsFromPayload(payload, cfg.ivaRate);
     const condicionIvaReceptorId = condicionIvaReceptorIdFromPayload(payload);
+    const cbteTipo = resolveCbteTipoFromPayload(payload, cfg.cbteTipo);
 
     const auth = await loginCms({
       wsaaUrl: cfg.wsaaUrl,
@@ -132,7 +176,7 @@ app.post("/comprobantes", authMiddleware, async (req, res) => {
       auth,
       cuit: cfg.cuit,
       ptoVta: cfg.ptoVta,
-      cbteTipo: cfg.cbteTipo,
+      cbteTipo,
       timeoutMs: cfg.timeoutMs
     });
 
@@ -142,7 +186,7 @@ app.post("/comprobantes", authMiddleware, async (req, res) => {
       auth,
       cuit: cfg.cuit,
       ptoVta: cfg.ptoVta,
-      cbteTipo: cfg.cbteTipo,
+      cbteTipo,
       cbteDesde,
       docTipo,
       docNro,
@@ -164,6 +208,7 @@ app.post("/comprobantes", authMiddleware, async (req, res) => {
       cae: result.cae,
       caeVto: result.caeVto,
       cbteNro: result.cbteNro,
+      cbteTipo,
       mode: cfg.mode
     });
   } catch (error) {

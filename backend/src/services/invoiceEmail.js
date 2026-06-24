@@ -87,7 +87,8 @@ async function sendSaleInvoiceEmail(sale) {
     {
       ...sale,
       arca_cae: arcaPayload?.cae || null,
-      arca_cae_vto: arcaPayload?.caeVto || null
+      arca_cae_vto: arcaPayload?.caeVto || null,
+      arca_cbte_tipo: arcaPayload?.cbteTipo || null
     },
     { autoPrint: false, documentType: hasArcaFiscalData ? "arca" : "invoice" }
   );

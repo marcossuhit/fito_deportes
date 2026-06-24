@@ -30,6 +30,20 @@ function normalizeItem(item) {
   };
 }
 
+function resolveInvoiceLetterByIvaCondition(condition) {
+  const raw = String(condition || "").trim().toLowerCase();
+  if (
+    raw === "iva resp inscripto" ||
+    raw === "iva responsable inscripto" ||
+    raw === "responsable inscripto" ||
+    raw === "monotributo" ||
+    raw === "monotributista"
+  ) {
+    return "A";
+  }
+  return "B";
+}
+
 function buildInvoiceHtml(sale, options = {}) {
   const documentTypeRaw = String(options.documentType || "invoice").toLowerCase();
   const documentType = documentTypeRaw === "quote" ? "quote" : documentTypeRaw === "arca" ? "arca" : "invoice";
@@ -54,6 +68,10 @@ function buildInvoiceHtml(sale, options = {}) {
   const arcaCae = String(sale?.arca_cae || "-");
   const arcaCaeVto = String(sale?.arca_cae_vto || "-");
   const arcaComprobanteLabel = `fac-${String(sale?.invoice_number || "-")}`;
+  const arcaCbteTipo = Number(sale?.arca_cbte_tipo || 0);
+  const arcaLetter = arcaCbteTipo === 1 ? "A" : "B";
+  const arcaDocCode = arcaCbteTipo === 1 ? "001" : "006";
+  const internalLetter = resolveInvoiceLetterByIvaCondition(sale?.customer_condicion_iva);
 
   const rows = items
     .map(
@@ -133,10 +151,10 @@ function buildInvoiceHtml(sale, options = {}) {
       </div>
       <div>
         <div class="doc-row">
-          <div class="letter">B</div>
+          <div class="letter">${arcaLetter}</div>
           <div>
             <div class="doctype">FACTURA</div>
-            <div class="doctype-code">(cod.011)</div>
+            <div class="doctype-code">(cod.${arcaDocCode})</div>
           </div>
         </div>
         <p class="kv"><b>Comprobante:</b> ${escapeHtml(arcaComprobanteLabel)}</p>
@@ -272,7 +290,7 @@ function buildInvoiceHtml(sale, options = {}) {
       </div>
       <div class="doc">
         <div class="type">${docLabel}</div>
-        <div class="letter">B</div>
+        <div class="letter">${internalLetter}</div>
         <div class="sub"><strong>${docNumberLabel}:</strong> ${escapeHtml(sale?.invoice_number || "-")}</div>
         <div class="sub"><strong>Fecha:</strong> ${escapeHtml(saleDate)}</div>
       </div>

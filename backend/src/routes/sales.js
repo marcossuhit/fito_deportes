@@ -81,7 +81,8 @@ function withArcaFields(sale) {
   return {
     ...sale,
     arca_cae: payload?.cae || null,
-    arca_cae_vto: payload?.caeVto || null
+    arca_cae_vto: payload?.caeVto || null,
+    arca_cbte_tipo: payload?.cbteTipo || null
   };
 }
 
@@ -346,6 +347,7 @@ router.post("/:id/arca/generate", async (req, res) => {
               c.first_name AS customer_first_name,
               c.last_name AS customer_last_name,
               c.cuit AS customer_cuit,
+              c.condicion_iva AS customer_condicion_iva,
               c.email AS customer_email
        FROM sales s
        JOIN users u ON u.id = s.seller_user_id

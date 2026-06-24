@@ -99,6 +99,75 @@ router.post("/", (req, res) => {
   }
 });
 
+router.put("/:id", (req, res) => {
+  const clientId = Number(req.params.id);
+  const { firstName, lastName, cuit, phone, email, condicionIva } = req.body || {};
+
+  if (!Number.isInteger(clientId) || clientId <= 0) {
+    return res.status(400).json({ message: "Cliente inválido." });
+  }
+
+  const normalizedFirstName = String(firstName || "").trim();
+  const normalizedLastName = String(lastName || "").trim();
+  const normalizedCuit = String(cuit || "").trim();
+  const normalizedPhone = String(phone || "").trim();
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const normalizedCondicionIva = String(condicionIva || "").trim();
+
+  if (
+    !normalizedFirstName ||
+    !normalizedLastName ||
+    !normalizedCuit ||
+    !normalizedPhone ||
+    !normalizedEmail ||
+    !normalizedCondicionIva
+  ) {
+    return res.status(400).json({ message: "Nombre, apellido, CUIT, teléfono, email y condición frente al IVA son obligatorios." });
+  }
+
+  const existing = db.prepare("SELECT id FROM clients WHERE id = ?").get(clientId);
+  if (!existing) {
+    return res.status(404).json({ message: "Cliente no encontrado." });
+  }
+
+  try {
+    db.prepare(
+      `UPDATE clients
+       SET first_name = ?,
+           last_name = ?,
+           cuit = ?,
+           phone = ?,
+           email = ?,
+           condicion_iva = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`
+    ).run(
+      normalizedFirstName,
+      normalizedLastName,
+      normalizedCuit,
+      normalizedPhone,
+      normalizedEmail,
+      normalizedCondicionIva,
+      clientId
+    );
+
+    const client = db
+      .prepare(
+        `SELECT id, first_name, last_name, cuit, phone, email, condicion_iva, created_at, updated_at
+         FROM clients
+         WHERE id = ?`
+      )
+      .get(clientId);
+
+    return res.json({ client });
+  } catch (error) {
+    if (String(error.message).includes("UNIQUE")) {
+      return res.status(409).json({ message: "Ya existe un cliente con ese CUIT." });
+    }
+    return res.status(500).json({ message: "No se pudo actualizar el cliente." });
+  }
+});
+
 router.post("/:id/debts", (req, res) => {
   const clientId = Number(req.params.id);
   const amount = Number(req.body?.amount);
