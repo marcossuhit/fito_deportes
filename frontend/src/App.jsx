@@ -29,6 +29,7 @@ const ivaConditionOptions = [
 ];
 
 const productBrandOptionsRaw = [
+  "JIU JISTU",
   "SPORTCOM/DRB",
   "KONNA",
   "GYMTONIC",
