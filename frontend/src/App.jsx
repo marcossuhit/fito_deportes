@@ -91,6 +91,43 @@ function money(value) {
   return `$${Number(value || 0).toFixed(2)}`;
 }
 
+function parseDateValue(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) {
+    return null;
+  }
+
+  const sqliteMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
+  if (sqliteMatch) {
+    const [, year, month, day, hour, minute, second, milliseconds] = sqliteMatch;
+    const normalizedMs = `${milliseconds || "0"}`.padEnd(3, "0");
+    return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}.${normalizedMs}-03:00`);
+  }
+
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateTime(value) {
+  const date = parseDateValue(value);
+  if (!date) {
+    return "-";
+  }
+
+  return date.toLocaleString("es-AR", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    hour12: false
+  });
+}
+
 function paymentMethodLabel(value) {
   const key = String(value || "").toLowerCase();
   if (key === "cash") return "Efectivo";
@@ -266,6 +303,9 @@ function App() {
 
   const [saleBarcode, setSaleBarcode] = useState("");
   const [cart, setCart] = useState([]);
+  const [manualDesc, setManualDesc] = useState("");
+  const [manualPrice, setManualPrice] = useState("");
+  const [manualQty, setManualQty] = useState("1");
   const [cartQuantityDrafts, setCartQuantityDrafts] = useState({});
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [saleMessage, setSaleMessage] = useState("");
@@ -1036,6 +1076,46 @@ function App() {
     setSaleError("");
   }
 
+  function handleAddManualProduct() {
+    setSaleError("");
+    setSaleMessage("");
+
+    const desc = String(manualDesc || "").trim();
+    const price = Number(String(manualPrice || "").replace(/,/g, "."));
+    const qty = Number(manualQty);
+
+    if (!desc) {
+      setSaleError("Ingresá descripción del producto.");
+      return;
+    }
+    if (!Number.isFinite(price) || price < 0) {
+      setSaleError("Precio inválido.");
+      return;
+    }
+    if (!Number.isInteger(qty) || qty <= 0) {
+      setSaleError("Cantidad inválida.");
+      return;
+    }
+
+    const id = `manual-${Date.now()}`;
+    setCart((prev) => [
+      ...prev,
+      {
+        productId: id,
+        barcode: null,
+        name: desc,
+        price: Number(price),
+        quantity: qty,
+        maxStock: qty
+      }
+    ]);
+
+    setManualDesc("");
+    setManualPrice("");
+    setManualQty("1");
+    setSaleMessage("Producto agregado manualmente.");
+  }
+
   function changeCartQuantityDraft(productId, value) {
     if (!/^\d*$/.test(String(value))) {
       return;
@@ -1123,10 +1203,21 @@ function App() {
       const payload = {
         paymentMethod,
         customerId: selectedCustomerId ? Number(selectedCustomerId) : null,
-        items: cart.map((item) => ({
-          productId: item.productId,
-          quantity: item.quantity
-        }))
+        items: cart.map((item) => {
+          // manual items have productId like 'manual-...'
+          if (String(item.productId).startsWith("manual-") || item.productId === null) {
+            return {
+              productId: null,
+              productName: item.name,
+              unitPrice: item.price,
+              quantity: item.quantity
+            };
+          }
+          return {
+            productId: Number(item.productId),
+            quantity: item.quantity
+          };
+        })
       };
 
       const data = await api.createSale(payload);
@@ -1160,10 +1251,20 @@ function App() {
       const payload = {
         paymentMethod,
         customerId: selectedCustomerId ? Number(selectedCustomerId) : null,
-        items: cart.map((item) => ({
-          productId: item.productId,
-          quantity: item.quantity
-        }))
+        items: cart.map((item) => {
+          if (String(item.productId).startsWith("manual-") || item.productId === null) {
+            return {
+              productId: null,
+              productName: item.name,
+              unitPrice: item.price,
+              quantity: item.quantity
+            };
+          }
+          return {
+            productId: Number(item.productId),
+            quantity: item.quantity
+          };
+        })
       };
 
       const data = await api.createQuote(payload);
@@ -2497,46 +2598,50 @@ function App() {
                 className="w-full rounded-xl border-2 border-slate-300 px-4 py-3"
               />
 
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={startSalesBarcodeScanner}
-                  disabled={salesScannerLoading || salesScannerActive}
-                  className="rounded-lg bg-slate-800 px-3 py-2 text-sm font-bold text-white hover:bg-slate-900 disabled:opacity-50"
-                >
-                  {salesScannerLoading ? "Iniciando cámara..." : salesScannerActive ? "Escáner activo" : "Escanear código"}
-                </button>
-                <button
-                  type="button"
-                  onClick={stopSalesBarcodeScanner}
-                  disabled={!salesScannerActive}
-                  className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-bold text-slate-800 hover:bg-slate-300 disabled:opacity-50"
-                >
-                  Detener escáner
-                </button>
-                {salesScannerCameras.length > 1 ? (
-                  <select
-                    value={selectedSalesCameraId}
-                    onChange={(e) => switchSalesBarcodeScannerCamera(e.target.value)}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+              <div className="mt-2 grid gap-3 md:grid-cols-3">
+                <div>
+                  <label className="text-sm font-semibold text-slate-700">Descripción</label>
+                  <input
+                    type="text"
+                    value={manualDesc}
+                    onChange={(e) => setManualDesc(e.target.value)}
+                    placeholder="Descripción del producto"
+                    className="w-full rounded-xl border-2 border-slate-300 px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-slate-700">Precio</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={manualPrice}
+                    onChange={(e) => setManualPrice(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full rounded-xl border-2 border-slate-300 px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-semibold text-slate-700">Cantidad</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={manualQty}
+                    onChange={(e) => setManualQty(e.target.value)}
+                    className="w-full rounded-xl border-2 border-slate-300 px-3 py-2"
+                  />
+                </div>
+                <div className="md:col-span-3">
+                  <button
+                    type="button"
+                    onClick={handleAddManualProduct}
+                    className="rounded-lg bg-amber-500 px-4 py-2 font-bold text-black hover:bg-amber-600"
                   >
-                    {salesScannerCameras.map((camera) => (
-                      <option key={camera.id} value={camera.id}>
-                        {camera.label || `Cámara ${camera.id}`}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
+                    Ingreso manual
+                  </button>
+                </div>
               </div>
-
-              <div className={`mt-2 overflow-hidden rounded-xl border ${salesScannerActive ? "border-emerald-300" : "border-slate-200"} bg-slate-50`}>
-                <div
-                  id="sales-barcode-scanner-reader"
-                  className={`w-full min-h-[220px] ${salesScannerActive ? "block" : "hidden"}`}
-                />
-                {!salesScannerActive ? <p className="px-3 py-2 text-sm text-slate-600">Abrí el escáner para leer y agregar al carrito automáticamente.</p> : null}
-              </div>
-              {salesScannerError ? <p className="mt-2 rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700">{salesScannerError}</p> : null}
 
               {saleBarcode.trim() && (
                 <div className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-xl border-2 border-amber-300 bg-amber-50 shadow-lg ring-2 ring-amber-200/70">
@@ -2695,7 +2800,7 @@ function App() {
               {sales.slice(0, 15).map((sale) => (
                 <tr key={sale.id} className="bg-slate-50 text-lg">
                   <td className="rounded-l-xl px-4 py-3 font-semibold">{sale.invoice_number}</td>
-                  <td className="px-4 py-3">{new Date(sale.created_at).toLocaleString()}</td>
+                  <td className="px-4 py-3">{formatDateTime(sale.created_at)}</td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex rounded-full px-3 py-1 text-sm font-bold ${paymentMethodTone(sale.payment_method)}`}>
                       {paymentMethodLabel(sale.payment_method)}
@@ -2781,7 +2886,7 @@ function App() {
             {cash.openSession ? (
               <div className="space-y-3">
                 <p className="rounded-lg bg-emerald-100 p-3">
-                  Caja ABIERTA desde {new Date(cash.openSession.opened_at).toLocaleString()}
+                  Caja ABIERTA desde {formatDateTime(cash.openSession.opened_at)}
                 </p>
                 <p className="text-lg">Apertura: {money(cash.openSession.opening_amount)}</p>
                 <p className="text-lg">Ventas efectivo: {money(cash.metrics?.cashSalesTotal)}</p>
@@ -2871,7 +2976,7 @@ function App() {
                         {paymentMethodLabel(sale.payment_method)}
                       </span>
                     </div>
-                    <p className="mt-1 text-sm text-slate-600">{new Date(sale.created_at).toLocaleString()}</p>
+                    <p className="mt-1 text-sm text-slate-600">{formatDateTime(sale.created_at)}</p>
                     <p className="mt-2 text-sm text-slate-700">{sale.item_count} items</p>
                     <p className="text-lg font-extrabold text-slate-900">{money(sale.total_amount)}</p>
                     <div className="mt-2 flex gap-2">
@@ -2918,10 +3023,10 @@ function App() {
                   </span>
                 </p>
                 <p className="mt-2 text-slate-700">
-                  Abierta: {session.opened_at ? new Date(session.opened_at).toLocaleString() : "-"} por {session.opened_by || "-"}
+                  Abierta: {session.opened_at ? formatDateTime(session.opened_at) : "-"} por {session.opened_by || "-"}
                 </p>
                 <p className="text-slate-700">
-                  Cerrada: {session.closed_at ? new Date(session.closed_at).toLocaleString() : "-"} por {session.closed_by || "-"}
+                  Cerrada: {session.closed_at ? formatDateTime(session.closed_at) : "-"} por {session.closed_by || "-"}
                 </p>
                 <p className="mt-2 text-slate-800">
                   Apertura <span className="font-bold">{money(session.opening_amount)}</span> | Cierre{" "}
@@ -3060,7 +3165,7 @@ function App() {
               {filteredInvoices.map((sale) => (
                 <tr key={sale.id} className={`text-lg ${selectedSaleId === sale.id ? "bg-amber-100" : "bg-slate-50"}`}>
                   <td className="rounded-l-xl px-4 py-3 font-semibold">{sale.invoice_number}</td>
-                  <td className="px-4 py-3">{new Date(sale.created_at).toLocaleString()}</td>
+                  <td className="px-4 py-3">{formatDateTime(sale.created_at)}</td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex rounded-full px-3 py-1 text-sm font-bold ${paymentMethodTone(sale.payment_method)}`}>
                       {paymentMethodLabel(sale.payment_method)}
@@ -3222,7 +3327,7 @@ function App() {
                   </div>
                   <div className="rounded-lg bg-blue-100 p-3">
                     <p className="text-sm font-bold uppercase text-blue-700">Fecha</p>
-                    <p className="text-lg font-extrabold">{new Date(selected.created_at).toLocaleString()}</p>
+                    <p className="text-lg font-extrabold">{formatDateTime(selected.created_at)}</p>
                   </div>
                   <div className="rounded-lg bg-emerald-100 p-3">
                     <p className="text-sm font-bold uppercase text-emerald-700">Vendedor</p>
@@ -3461,7 +3566,7 @@ function App() {
                   <div className="mt-3 space-y-2">
                     {(client.debts || []).slice(0, 10).map((debt) => (
                       <div key={debt.id} className="flex flex-wrap items-center justify-between rounded-lg bg-white px-3 py-2 text-sm">
-                        <span>{new Date(debt.created_at).toLocaleString()}</span>
+                        <span>{formatDateTime(debt.created_at)}</span>
                         <span className="font-semibold">{debt.note || "Sin detalle"}</span>
                         <span className={`font-bold ${Number(debt.amount) >= 0 ? "text-red-700" : "text-emerald-700"}`}>
                           {money(debt.amount)}
@@ -3502,7 +3607,7 @@ function App() {
                         {(client.purchases || []).map((sale) => (
                           <tr key={`${client.id}-${sale.id}`} className="bg-white">
                             <td className="rounded-l-lg px-3 py-2 font-semibold">{sale.invoice_number}</td>
-                            <td className="px-3 py-2">{new Date(sale.created_at).toLocaleString()}</td>
+                            <td className="px-3 py-2">{formatDateTime(sale.created_at)}</td>
                             <td className="px-3 py-2">{paymentMethodLabel(sale.payment_method)}</td>
                             <td className="px-3 py-2">{sale.item_count}</td>
                             <td className="px-3 py-2 font-bold">{money(sale.total_amount)}</td>
@@ -3859,7 +3964,7 @@ function App() {
                 <p className="text-base font-bold text-slate-900">
                   {user.username} <span className="text-slate-500">({user.role === "admin" ? "Administrador" : "Empleado"})</span>
                 </p>
-                <p className="text-xs text-slate-500">{new Date().toLocaleString()}</p>
+                <p className="text-xs text-slate-500">{formatDateTime(new Date())}</p>
               </div>
 
               <button

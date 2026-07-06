@@ -16,23 +16,51 @@ function toMoney(value) {
   return Math.round(Number(value) * 100) / 100;
 }
 
+function formatBuenosAiresTimestamp(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+
+  const parts = formatter.formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
+}
+
 function buildInvoiceNumber(saleId) {
   const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  return `FAC-${yyyy}${mm}${dd}-${String(saleId).padStart(6, "0")}`;
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const parts = formatter.formatToParts(now);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `FAC-${values.year}${values.month}${values.day}-${String(saleId).padStart(6, "0")}`;
 }
 
 function buildQuoteNumber() {
   const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  const hh = String(now.getHours()).padStart(2, "0");
-  const min = String(now.getMinutes()).padStart(2, "0");
-  const sec = String(now.getSeconds()).padStart(2, "0");
-  return `PRE-${yyyy}${mm}${dd}-${hh}${min}${sec}`;
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+  const parts = formatter.formatToParts(now);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `PRE-${values.year}${values.month}${values.day}-${values.hour}${values.minute}${values.second}`;
 }
 
 function getSaleWithItems(id) {
@@ -129,58 +157,72 @@ router.post("/quote", async (req, res) => {
   }
 
   try {
-    const normalizedItems = items.map((rawItem) => ({
-      productId: Number(rawItem.productId),
-      quantity: Number(rawItem.quantity)
-    }));
-
     const detailedItems = [];
     let total = 0;
 
-    for (const item of normalizedItems) {
-      if (!Number.isInteger(item.productId) || item.productId <= 0) {
-        const error = new Error("Producto inválido en el presupuesto.");
-        error.status = 400;
-        throw error;
-      }
-
-      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+    for (const rawItem of items) {
+      const qty = Number(rawItem.quantity);
+      if (!Number.isInteger(qty) || qty <= 0) {
         const error = new Error("Cantidad inválida en el presupuesto.");
         error.status = 400;
         throw error;
       }
 
-      const product = db
-        .prepare(
-          `SELECT id, name, size_color, price, stock
-           FROM products
-           WHERE id = ?`
-        )
-        .get(item.productId);
+      const parsedProductId = rawItem.productId !== undefined && rawItem.productId !== null ? Number(rawItem.productId) : null;
 
-      if (!product) {
-        const error = new Error("Uno de los productos no existe.");
-        error.status = 404;
-        throw error;
+      if (parsedProductId && Number.isInteger(parsedProductId) && parsedProductId > 0) {
+        const product = db
+          .prepare(
+            `SELECT id, name, size_color, price, stock
+             FROM products
+             WHERE id = ?`
+          )
+          .get(parsedProductId);
+
+        if (!product) {
+          const error = new Error("Uno de los productos no existe.");
+          error.status = 404;
+          throw error;
+        }
+
+        const lineTotal = toMoney(Number(product.price) * qty);
+        total = toMoney(total + lineTotal);
+
+        detailedItems.push({
+          productId: product.id,
+          productName: product.name,
+          sizeColor: product.size_color,
+          unitPrice: Number(product.price),
+          quantity: qty,
+          lineTotal
+        });
+      } else {
+        // Manual / temporary item: expect productName and unitPrice in payload
+        const name = String(rawItem.productName || rawItem.name || "").trim();
+        const unitPrice = Number(rawItem.unitPrice ?? rawItem.price);
+        if (!name) {
+          const error = new Error("Producto inválido en el presupuesto (falta nombre).");
+          error.status = 400;
+          throw error;
+        }
+        if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+          const error = new Error("Precio inválido en el presupuesto.");
+          error.status = 400;
+          throw error;
+        }
+
+        const lineTotal = toMoney(unitPrice * qty);
+        total = toMoney(total + lineTotal);
+
+        detailedItems.push({
+          productId: null,
+          productName: name,
+          sizeColor: String(rawItem.sizeColor || rawItem.size_color || ""),
+          unitPrice: Number(unitPrice),
+          quantity: qty,
+          lineTotal
+        });
       }
-
-      if (product.stock < item.quantity) {
-        const error = new Error(`Stock insuficiente para ${product.name}.`);
-        error.status = 400;
-        throw error;
-      }
-
-      const lineTotal = toMoney(Number(product.price) * item.quantity);
-      total = toMoney(total + lineTotal);
-
-      detailedItems.push({
-        productId: product.id,
-        productName: product.name,
-        sizeColor: product.size_color,
-        unitPrice: Number(product.price),
-        quantity: item.quantity,
-        lineTotal
-      });
     }
 
     let customer = null;
@@ -212,7 +254,7 @@ router.post("/quote", async (req, res) => {
       payment_method: normalizedPaymentMethod,
       total_amount: total,
       customer_id: customer?.id || null,
-      created_at: new Date().toISOString(),
+      created_at: formatBuenosAiresTimestamp(),
       seller: req.session.user.username,
       customer_first_name: customer?.first_name || null,
       customer_last_name: customer?.last_name || null,
@@ -461,59 +503,79 @@ router.post("/", async (req, res) => {
 
   try {
     const createSaleTx = db.transaction(() => {
-      const normalizedItems = items.map((rawItem) => ({
-        productId: Number(rawItem.productId),
-        quantity: Number(rawItem.quantity)
-      }));
+        const detailedItems = [];
+        let saleTotal = 0;
 
-      const detailedItems = [];
-      let saleTotal = 0;
+        for (const rawItem of items) {
+          const qty = Number(rawItem.quantity);
+          if (!Number.isInteger(qty) || qty <= 0) {
+            const error = new Error("Cantidad inválida en la venta.");
+            error.status = 400;
+            throw error;
+          }
 
-      for (const item of normalizedItems) {
-        if (!Number.isInteger(item.productId) || item.productId <= 0) {
-          const error = new Error("Producto inválido en la venta.");
-          error.status = 400;
-          throw error;
+          const parsedProductId = rawItem.productId !== undefined && rawItem.productId !== null ? Number(rawItem.productId) : null;
+
+          if (parsedProductId && Number.isInteger(parsedProductId) && parsedProductId > 0) {
+            const product = db
+              .prepare(
+                `SELECT id, name, size_color, price, stock
+                 FROM products
+                 WHERE id = ?`
+              )
+              .get(parsedProductId);
+
+            if (!product) {
+              const error = new Error("Uno de los productos no existe.");
+              error.status = 404;
+              throw error;
+            }
+
+            if (product.stock < qty) {
+              const error = new Error(`Stock insuficiente para ${product.name}.`);
+              error.status = 400;
+              throw error;
+            }
+
+            const lineTotal = toMoney(Number(product.price) * qty);
+            saleTotal = toMoney(saleTotal + lineTotal);
+
+            detailedItems.push({
+              productId: product.id,
+              productName: product.name,
+              sizeColor: product.size_color,
+              unitPrice: Number(product.price),
+              quantity: qty,
+              lineTotal
+            });
+          } else {
+            // Manual / temporary item
+            const name = String(rawItem.productName || rawItem.name || "").trim();
+            const unitPrice = Number(rawItem.unitPrice ?? rawItem.price);
+            if (!name) {
+              const error = new Error("Producto inválido en la venta (falta nombre).");
+              error.status = 400;
+              throw error;
+            }
+            if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+              const error = new Error("Precio inválido en la venta.");
+              error.status = 400;
+              throw error;
+            }
+
+            const lineTotal = toMoney(unitPrice * qty);
+            saleTotal = toMoney(saleTotal + lineTotal);
+
+            detailedItems.push({
+              productId: null,
+              productName: name,
+              sizeColor: String(rawItem.sizeColor || rawItem.size_color || ""),
+              unitPrice: Number(unitPrice),
+              quantity: qty,
+              lineTotal
+            });
+          }
         }
-
-        if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
-          const error = new Error("Cantidad inválida en la venta.");
-          error.status = 400;
-          throw error;
-        }
-
-        const product = db
-          .prepare(
-            `SELECT id, name, size_color, price, stock
-             FROM products
-             WHERE id = ?`
-          )
-          .get(item.productId);
-
-        if (!product) {
-          const error = new Error("Uno de los productos no existe.");
-          error.status = 404;
-          throw error;
-        }
-
-        if (product.stock < item.quantity) {
-          const error = new Error(`Stock insuficiente para ${product.name}.`);
-          error.status = 400;
-          throw error;
-        }
-
-        const lineTotal = toMoney(Number(product.price) * item.quantity);
-        saleTotal = toMoney(saleTotal + lineTotal);
-
-        detailedItems.push({
-          productId: product.id,
-          productName: product.name,
-          sizeColor: product.size_color,
-          unitPrice: Number(product.price),
-          quantity: item.quantity,
-          lineTotal
-        });
-      }
 
       let cashSessionId = null;
       let normalizedCustomerId = null;
@@ -557,10 +619,18 @@ router.post("/", async (req, res) => {
 
       const insertSale = db
         .prepare(
-          `INSERT INTO sales (invoice_number, seller_user_id, customer_id, cash_session_id, payment_method, total_amount)
-           VALUES (?, ?, ?, ?, ?, ?)`
+          `INSERT INTO sales (invoice_number, seller_user_id, customer_id, cash_session_id, payment_method, total_amount, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(null, req.session.user.id, normalizedCustomerId, cashSessionId, normalizedPaymentMethod, saleTotal);
+        .run(
+          null,
+          req.session.user.id,
+          normalizedCustomerId,
+          cashSessionId,
+          normalizedPaymentMethod,
+          saleTotal,
+          formatBuenosAiresTimestamp()
+        );
 
       const saleId = Number(insertSale.lastInsertRowid);
       const invoiceNumber = buildInvoiceNumber(saleId);
@@ -590,7 +660,9 @@ router.post("/", async (req, res) => {
           item.lineTotal
         );
 
-        updateStockStmt.run(item.quantity, item.productId);
+        if (item.productId) {
+          updateStockStmt.run(item.quantity, item.productId);
+        }
       }
 
       const sale = db

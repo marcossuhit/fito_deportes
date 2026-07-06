@@ -20,6 +20,43 @@ function paymentMethodLabel(value) {
   return value || "-";
 }
 
+function parseDateValue(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) {
+    return null;
+  }
+
+  const sqliteMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?$/);
+  if (sqliteMatch) {
+    const [, year, month, day, hour, minute, second, milliseconds] = sqliteMatch;
+    const normalizedMs = `${milliseconds || "0"}`.padEnd(3, "0");
+    return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}.${normalizedMs}-03:00`);
+  }
+
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateTime(value) {
+  const date = parseDateValue(value);
+  if (!date) {
+    return "-";
+  }
+
+  return date.toLocaleString("es-AR", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    hour12: false
+  });
+}
+
 function normalizeItem(item) {
   return {
     description: item.productName || item.product_name_snapshot || "Articulo",
@@ -51,8 +88,8 @@ function buildInvoiceHtml(sale, options = {}) {
   const isArca = documentType === "arca";
   const items = Array.isArray(sale?.items) ? sale.items.map(normalizeItem) : [];
   const total = Number(sale?.total_amount || 0);
-  const saleDate = sale?.created_at ? new Date(sale.created_at).toLocaleString("es-AR") : "-";
-  const issueDate = new Date().toLocaleString("es-AR");
+  const saleDate = formatDateTime(sale?.created_at);
+  const issueDate = formatDateTime(new Date());
   const customerName =
     `${sale?.customer_first_name || ""} ${sale?.customer_last_name || ""}`.trim() || "Consumidor Final";
   const customerCuit = String(sale?.customer_cuit || "-").trim() || "-";

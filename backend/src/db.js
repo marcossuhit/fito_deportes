@@ -3,6 +3,8 @@ const path = require("path");
 const bcrypt = require("bcryptjs");
 const Database = require("better-sqlite3");
 
+process.env.TZ = process.env.TZ || "America/Argentina/Buenos_Aires";
+
 const dbPathFromEnv = process.env.SQLITE_PATH || "./data/fito-deportes.db";
 const dbPath = path.isAbsolute(dbPathFromEnv)
   ? dbPathFromEnv
@@ -112,6 +114,45 @@ function runMigrations() {
     )`
   );
   db.exec("CREATE INDEX IF NOT EXISTS idx_client_debts_client_id ON client_debts (client_id)");
+
+  // Ensure sale_items.product_id allows NULL for manual/temporary items
+  try {
+    const saleItemsInfo = db.prepare("PRAGMA table_info(sale_items)").all();
+    const productIdCol = saleItemsInfo.find((c) => c.name === "product_id");
+    if (productIdCol && productIdCol.notnull === 1) {
+      // Recreate table allowing NULL product_id
+      db.exec("BEGIN TRANSACTION;");
+      db.exec(
+        `CREATE TABLE IF NOT EXISTS sale_items_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          sale_id INTEGER NOT NULL,
+          product_id INTEGER,
+          product_name_snapshot TEXT NOT NULL,
+          size_color_snapshot TEXT NOT NULL,
+          unit_price NUMERIC NOT NULL CHECK (unit_price >= 0),
+          quantity INTEGER NOT NULL CHECK (quantity > 0),
+          line_total NUMERIC NOT NULL CHECK (line_total >= 0),
+          FOREIGN KEY (sale_id) REFERENCES sales (id) ON DELETE CASCADE,
+          FOREIGN KEY (product_id) REFERENCES products (id)
+        );`
+      );
+      // copy data (product_id will be copied as-is)
+      db.exec(
+        `INSERT INTO sale_items_new (id, sale_id, product_id, product_name_snapshot, size_color_snapshot, unit_price, quantity, line_total)
+         SELECT id, sale_id, product_id, product_name_snapshot, size_color_snapshot, unit_price, quantity, line_total FROM sale_items;`
+      );
+      db.exec("DROP TABLE sale_items;");
+      db.exec("ALTER TABLE sale_items_new RENAME TO sale_items;");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_sale_items_product_id ON sale_items (product_id);");
+      db.exec("COMMIT;");
+    }
+  } catch (err) {
+    // If migration fails, rollback and continue (existing DB may be used)
+    try {
+      db.exec("ROLLBACK;");
+    } catch {}
+    console.error("Could not migrate sale_items.product_id nullability:", err.message || err);
+  }
 }
 
 function seedPredefinedUsers() {
