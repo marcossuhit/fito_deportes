@@ -115,15 +115,18 @@ function runMigrations() {
   );
   db.exec("CREATE INDEX IF NOT EXISTS idx_client_debts_client_id ON client_debts (client_id)");
 
-  // Ensure sale_items.product_id allows NULL for manual/temporary items
+cd ..
+  // Safe deployment-time migration for manual/temporary items.
+  // It only adjusts sale_items and preserves all existing sale_items rows and products.
   try {
     const saleItemsInfo = db.prepare("PRAGMA table_info(sale_items)").all();
     const productIdCol = saleItemsInfo.find((c) => c.name === "product_id");
     if (productIdCol && productIdCol.notnull === 1) {
-      // Recreate table allowing NULL product_id
-      db.exec("BEGIN TRANSACTION;");
+      db.exec("PRAGMA foreign_keys = OFF;");
+      db.exec("BEGIN IMMEDIATE;");
+      db.exec("DROP TABLE IF EXISTS sale_items_new;");
       db.exec(
-        `CREATE TABLE IF NOT EXISTS sale_items_new (
+        `CREATE TABLE sale_items_new (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           sale_id INTEGER NOT NULL,
           product_id INTEGER,
@@ -136,7 +139,6 @@ function runMigrations() {
           FOREIGN KEY (product_id) REFERENCES products (id)
         );`
       );
-      // copy data (product_id will be copied as-is)
       db.exec(
         `INSERT INTO sale_items_new (id, sale_id, product_id, product_name_snapshot, size_color_snapshot, unit_price, quantity, line_total)
          SELECT id, sale_id, product_id, product_name_snapshot, size_color_snapshot, unit_price, quantity, line_total FROM sale_items;`
@@ -145,11 +147,14 @@ function runMigrations() {
       db.exec("ALTER TABLE sale_items_new RENAME TO sale_items;");
       db.exec("CREATE INDEX IF NOT EXISTS idx_sale_items_product_id ON sale_items (product_id);");
       db.exec("COMMIT;");
+      db.exec("PRAGMA foreign_keys = ON;");
     }
   } catch (err) {
-    // If migration fails, rollback and continue (existing DB may be used)
     try {
       db.exec("ROLLBACK;");
+    } catch {}
+    try {
+      db.exec("PRAGMA foreign_keys = ON;");
     } catch {}
     console.error("Could not migrate sale_items.product_id nullability:", err.message || err);
   }

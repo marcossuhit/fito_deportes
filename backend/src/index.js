@@ -1,4 +1,5 @@
 const path = require("path");
+process.env.TZ = process.env.TZ || "America/Argentina/Buenos_Aires";
 require("dotenv").config({ path: path.resolve(__dirname, "..", ".env") });
 
 const express = require("express");

@@ -1209,7 +1209,10 @@ function App() {
             return {
               productId: null,
               productName: item.name,
+              name: item.name,
+              description: item.name,
               unitPrice: item.price,
+              price: item.price,
               quantity: item.quantity
             };
           }
@@ -1256,7 +1259,10 @@ function App() {
             return {
               productId: null,
               productName: item.name,
+              name: item.name,
+              description: item.name,
               unitPrice: item.price,
+              price: item.price,
               quantity: item.quantity
             };
           }

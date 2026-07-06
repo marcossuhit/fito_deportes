@@ -63,6 +63,26 @@ function buildQuoteNumber() {
   return `PRE-${values.year}${values.month}${values.day}-${values.hour}${values.minute}${values.second}`;
 }
 
+function resolveManualItemName(rawItem) {
+  const name = String(
+    rawItem?.productName ??
+      rawItem?.name ??
+      rawItem?.description ??
+      rawItem?.label ??
+      rawItem?.title ??
+      rawItem?.product?.name ??
+      ""
+  ).trim();
+
+  return name || "Producto manual";
+}
+
+function resolveManualItemPrice(rawItem) {
+  const candidate = rawItem?.unitPrice ?? rawItem?.price ?? rawItem?.unit_price ?? rawItem?.amount ?? rawItem?.value;
+  const price = Number(candidate);
+  return Number.isFinite(price) ? price : 0;
+}
+
 function getSaleWithItems(id) {
   const sale = db
     .prepare(
@@ -197,14 +217,9 @@ router.post("/quote", async (req, res) => {
           lineTotal
         });
       } else {
-        // Manual / temporary item: expect productName and unitPrice in payload
-        const name = String(rawItem.productName || rawItem.name || "").trim();
-        const unitPrice = Number(rawItem.unitPrice ?? rawItem.price);
-        if (!name) {
-          const error = new Error("Producto inválido en el presupuesto (falta nombre).");
-          error.status = 400;
-          throw error;
-        }
+        // Manual / temporary item: accept several payload shapes from the UI
+        const name = resolveManualItemName(rawItem);
+        const unitPrice = resolveManualItemPrice(rawItem);
         if (!Number.isFinite(unitPrice) || unitPrice < 0) {
           const error = new Error("Precio inválido en el presupuesto.");
           error.status = 400;
@@ -550,13 +565,8 @@ router.post("/", async (req, res) => {
             });
           } else {
             // Manual / temporary item
-            const name = String(rawItem.productName || rawItem.name || "").trim();
-            const unitPrice = Number(rawItem.unitPrice ?? rawItem.price);
-            if (!name) {
-              const error = new Error("Producto inválido en la venta (falta nombre).");
-              error.status = 400;
-              throw error;
-            }
+            const name = resolveManualItemName(rawItem);
+            const unitPrice = resolveManualItemPrice(rawItem);
             if (!Number.isFinite(unitPrice) || unitPrice < 0) {
               const error = new Error("Precio inválido en la venta.");
               error.status = 400;

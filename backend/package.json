@@ -4,8 +4,8 @@
   "private": true,
   "main": "src/index.js",
   "scripts": {
-    "dev": "nodemon src/index.js",
-    "start": "node src/index.js"
+    "dev": "TZ=America/Argentina/Buenos_Aires nodemon src/index.js",
+    "start": "TZ=America/Argentina/Buenos_Aires node src/index.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

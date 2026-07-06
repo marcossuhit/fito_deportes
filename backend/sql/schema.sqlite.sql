@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS sales (
 CREATE TABLE IF NOT EXISTS sale_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   sale_id INTEGER NOT NULL,
-  product_id INTEGER NOT NULL,
+  product_id INTEGER,
   product_name_snapshot TEXT NOT NULL,
   size_color_snapshot TEXT NOT NULL,
   unit_price NUMERIC NOT NULL CHECK (unit_price >= 0),
