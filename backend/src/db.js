@@ -115,7 +115,6 @@ function runMigrations() {
   );
   db.exec("CREATE INDEX IF NOT EXISTS idx_client_debts_client_id ON client_debts (client_id)");
 
-cd ..
   // Safe deployment-time migration for manual/temporary items.
   // It only adjusts sale_items and preserves all existing sale_items rows and products.
   try {
