@@ -2777,10 +2777,8 @@ function App() {
                 <th className="px-4 py-3">Factura</th>
                 <th className="px-4 py-3">Fecha</th>
                 <th className="px-4 py-3">Medio</th>
-                <th className="px-4 py-3">Items</th>
                 <th className="px-4 py-3">Total</th>
                 <th className="px-4 py-3">Vendedor</th>
-                <th className="px-4 py-3">ARCA</th>
                 <th className="px-4 py-3">Detalle</th>
               </tr>
             </thead>
@@ -2794,19 +2792,8 @@ function App() {
                       {paymentMethodLabel(sale.payment_method)}
                     </span>
                   </td>
-                  <td className="px-4 py-3">{sale.item_count}</td>
                   <td className="px-4 py-3 font-bold">{money(sale.total_amount)}</td>
                   <td className="px-4 py-3">{sale.seller}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      onClick={() => generateArcaComprobanteForSale(sale.id, { jumpToInvoices: true })}
-                      disabled={arcaLoadingSaleId === sale.id}
-                      className="rounded-lg bg-slate-700 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60"
-                    >
-                      {arcaLoadingSaleId === sale.id ? "Procesando..." : "ARCA"}
-                    </button>
-                  </td>
                   <td className="rounded-r-xl px-4 py-3">
                     <button
                       type="button"
@@ -3138,11 +3125,9 @@ function App() {
                 <th className="px-4 py-3">Factura</th>
                 <th className="px-4 py-3">Fecha</th>
                 <th className="px-4 py-3">Medio</th>
-                <th className="px-4 py-3">Items</th>
                 <th className="px-4 py-3">Total</th>
                 <th className="px-4 py-3">Cliente</th>
                 <th className="px-4 py-3">Vendedor</th>
-                <th className="px-4 py-3">Estado ARCA</th>
                 <th className="px-4 py-3">Detalle</th>
               </tr>
             </thead>
@@ -3156,7 +3141,6 @@ function App() {
                       {paymentMethodLabel(sale.payment_method)}
                     </span>
                   </td>
-                  <td className="px-4 py-3">{sale.item_count}</td>
                   <td className="px-4 py-3 font-bold">{money(sale.total_amount)}</td>
                   <td className="px-4 py-3">
                     {sale.customer_first_name
@@ -3164,11 +3148,6 @@ function App() {
                       : "-"}
                   </td>
                   <td className="px-4 py-3">{sale.seller}</td>
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex rounded-full px-3 py-1 text-sm font-bold ${arcaStatusTone(sale.arca_status)}`}>
-                      {arcaStatusLabel(sale.arca_status)}
-                    </span>
-                  </td>
                   <td className="rounded-r-xl px-4 py-3">
                     <button
                       type="button"
@@ -3199,14 +3178,41 @@ function App() {
           onToggle={() => toggleSection("facturas_detalle")}
           className="ring-1 ring-slate-200"
           headerActions={
-            <button
-              type="button"
-              onClick={printSelectedInvoice}
-              disabled={!selected || selectedSaleLoading}
-              className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-bold text-white hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Imprimir Factura Interna
-            </button>
+            <div className="flex flex-wrap items-stretch gap-2">
+              <button
+                type="button"
+                onClick={printSelectedInvoice}
+                disabled={!selected || selectedSaleLoading}
+                className="flex min-h-[44px] min-w-[190px] items-center justify-center rounded-xl bg-slate-800 px-4 py-2 text-sm font-bold text-white hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Imprimir Factura Interna
+              </button>
+              {selected?.arca_status !== "issued" && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    generateArcaComprobanteForSale(selected.id, {
+                      force: selected.arca_status === "issued",
+                      jumpToInvoices: true
+                    })
+                  }
+                  disabled={!selected || selected.arca_status === "issued" || arcaLoadingSaleId === selected.id}
+                  className="flex min-h-[44px] min-w-[190px] items-center justify-center rounded-xl bg-slate-700 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {arcaLoadingSaleId === selected?.id ? "Generando..." : "Generar comprobante ARCA"}
+                </button>
+              )}
+              {selected?.arca_status === "issued" && (
+                <button
+                  type="button"
+                  onClick={printSelectedArcaInvoice}
+                  disabled={!selected || selected.arca_status !== "issued" || selectedSaleLoading}
+                  className="flex min-h-[44px] min-w-[190px] items-center justify-center rounded-xl bg-indigo-700 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Imprimir Factura ARCA
+                </button>
+              )}
+            </div>
           }
         >
           <div
