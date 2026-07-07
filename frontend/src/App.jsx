@@ -189,24 +189,6 @@ function arcaStatusTone(value) {
   return "bg-slate-200 text-slate-800";
 }
 
-function parseArcaFiscalData(arcaComprobanteId, rawPayload) {
-  let payload = null;
-  try {
-    payload = rawPayload ? JSON.parse(rawPayload) : null;
-  } catch {
-    payload = null;
-  }
-
-  const cae = String(payload?.cae || "").trim() || "-";
-  const caeVto = String(payload?.caeVto || "").trim() || "-";
-  const parts = String(arcaComprobanteId || "").split("-");
-  const puntoVta = parts.length >= 1 ? parts[0] : "-";
-  const tipoCbte = parts.length >= 2 ? parts[1] : "-";
-  const numeroCbte = parts.length >= 3 ? parts[2] : "-";
-
-  return { cae, caeVto, puntoVta, tipoCbte, numeroCbte };
-}
-
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -3052,9 +3034,6 @@ function App() {
 
   function renderFacturas() {
     const selected = selectedSaleDetail;
-    const arcaFiscal = selected
-      ? parseArcaFiscalData(selected.arca_comprobante_id, selected.arca_response_payload)
-      : null;
 
     return (
       <div className="space-y-4">
@@ -3220,24 +3199,14 @@ function App() {
           onToggle={() => toggleSection("facturas_detalle")}
           className="ring-1 ring-slate-200"
           headerActions={
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={printSelectedInvoice}
-                disabled={!selected || selectedSaleLoading}
-                className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-bold text-white hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Imprimir Factura Interna
-              </button>
-              <button
-                type="button"
-                onClick={printSelectedArcaInvoice}
-                disabled={!selected || selected.arca_status !== "issued" || selectedSaleLoading}
-                className="rounded-xl bg-indigo-700 px-4 py-2 text-sm font-bold text-white hover:bg-indigo-800 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Imprimir Factura ARCA
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={printSelectedInvoice}
+              disabled={!selected || selectedSaleLoading}
+              className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-bold text-white hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Imprimir Factura Interna
+            </button>
           }
         >
           <div
@@ -3254,78 +3223,6 @@ function App() {
 
             {selected && !selectedSaleLoading && (
               <div className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 p-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm font-bold uppercase text-slate-500">ARCA</span>
-                    <span className={`inline-flex rounded-full px-3 py-1 text-sm font-bold ${arcaStatusTone(selected.arca_status)}`}>
-                      {arcaStatusLabel(selected.arca_status)}
-                    </span>
-                    {selected.arca_comprobante_id && (
-                      <span className="rounded-full bg-indigo-100 px-3 py-1 text-sm font-bold text-indigo-800">
-                        ID: {selected.arca_comprobante_id}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        generateArcaComprobanteForSale(selected.id, {
-                          force: selected.arca_status === "issued",
-                          jumpToInvoices: true
-                        })
-                      }
-                      disabled={arcaLoadingSaleId === selected.id}
-                      className="rounded-xl bg-slate-800 px-4 py-2 text-sm font-bold text-white hover:bg-slate-900 disabled:opacity-60"
-                    >
-                      {arcaLoadingSaleId === selected.id
-                        ? "Generando..."
-                        : selected.arca_status === "issued"
-                        ? "Regenerar comprobante ARCA"
-                        : "Generar comprobante ARCA"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => sendInvoiceEmailForSale(selected.id)}
-                      disabled={invoiceEmailLoadingSaleId === selected.id}
-                      className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-800 disabled:opacity-60"
-                    >
-                      {invoiceEmailLoadingSaleId === selected.id ? "Enviando..." : "Enviar Factura"}
-                    </button>
-                  </div>
-                </div>
-
-                {selected.arca_last_error && (
-                  <p className="rounded-lg bg-red-100 p-3 text-red-700">
-                    Último error ARCA: {selected.arca_last_error}
-                  </p>
-                )}
-
-                {selected.arca_status === "issued" && arcaFiscal && (
-                  <div className="grid gap-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 md:grid-cols-2 xl:grid-cols-5">
-                    <div>
-                      <p className="text-xs font-bold uppercase text-indigo-700">CAE</p>
-                      <p className="text-sm font-extrabold text-indigo-900">{arcaFiscal.cae}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold uppercase text-indigo-700">Vto. CAE</p>
-                      <p className="text-sm font-extrabold text-indigo-900">{arcaFiscal.caeVto}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold uppercase text-indigo-700">Punto de venta</p>
-                      <p className="text-sm font-extrabold text-indigo-900">{arcaFiscal.puntoVta}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold uppercase text-indigo-700">Tipo cbte</p>
-                      <p className="text-sm font-extrabold text-indigo-900">{arcaFiscal.tipoCbte}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold uppercase text-indigo-700">Número</p>
-                      <p className="text-sm font-extrabold text-indigo-900">{arcaFiscal.numeroCbte}</p>
-                    </div>
-                  </div>
-                )}
-
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                   <div className="rounded-lg bg-indigo-100 p-3">
                     <p className="text-sm font-bold uppercase text-indigo-700">Factura</p>
