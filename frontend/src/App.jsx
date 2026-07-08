@@ -3803,24 +3803,16 @@ function App() {
               </select>
             </label>
 
-            {isAdminLogin && (
-              <label className="block">
-                <span className="mb-2 block text-lg font-semibold text-slate-200">Contraseña</span>
-                <input
-                  type="password"
-                  className="w-full rounded-xl border-2 border-[#D4842B] bg-[#0D1117] px-4 py-3 text-white placeholder:text-slate-400"
-                  placeholder="Ingresá la clave de administrador"
-                  value={loginForm.password}
-                  onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
-                />
-              </label>
-            )}
-
-            {!isAdminLogin && (
-              <p className="rounded-lg border border-[#D4842B]/30 bg-[#1A1F27] p-3 text-base text-slate-200">
-                Usuario empleado seleccionado. No requiere contraseña.
-              </p>
-            )}
+            <label className="block">
+              <span className="mb-2 block text-lg font-semibold text-slate-200">Contraseña</span>
+              <input
+                type="password"
+                className="w-full rounded-xl border-2 border-[#D4842B] bg-[#0D1117] px-4 py-3 text-white placeholder:text-slate-400"
+                placeholder={isAdminLogin ? "Ingresá la clave de administrador" : "Ingresá la contraseña"}
+                value={loginForm.password}
+                onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
+              />
+            </label>
 
             {loginError && <p className="rounded-lg bg-red-950/70 p-3 text-lg text-red-200">{loginError}</p>}
 

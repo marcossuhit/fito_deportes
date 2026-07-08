@@ -170,10 +170,10 @@ function seedPredefinedUsers() {
 
   const predefinedUsers = [
     { username: "FitoAdmin", role: "admin", requiresPassword: true, password: "JOAQUINA" },
-    { username: "Fito", role: "employee", requiresPassword: false, password: "__NO_PASSWORD__" },
-    { username: "Fito1", role: "employee", requiresPassword: false, password: "__NO_PASSWORD__" },
-    { username: "Fito2", role: "employee", requiresPassword: false, password: "__NO_PASSWORD__" },
-    { username: "Fito3", role: "employee", requiresPassword: false, password: "__NO_PASSWORD__" }
+    { username: "Fito", role: "employee", requiresPassword: true, password: "Joaquina" },
+    { username: "Fito1", role: "employee", requiresPassword: true, password: "Joaquina1" },
+    { username: "Fito2", role: "employee", requiresPassword: true, password: "Joaquina2" },
+    { username: "Fito3", role: "employee", requiresPassword: true, password: "Joaquina3" }
   ];
 
   for (const predefinedUser of predefinedUsers) {
